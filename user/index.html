@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#123c4a">
+    <meta name="description" content="Peça ajuda por voz ou conecte-se com uma pessoa voluntária.">
+    <title>Meus Olhos | Assistência por voz</title>
+    <link rel="stylesheet" href="/user/styles.css">
+  </head>
+  <body>
+    <main class="card" aria-labelledby="page-title">
+      <a class="brand" href="/user/" aria-label="Meus Olhos, início">MEUS OLHOS</a>
+      <h1 id="page-title">Como posso ajudar?</h1>
+      <p class="intro">
+        Você pode falar comigo. Sua localização nunca é solicitada automaticamente.
+      </p>
+
+      <section class="voice-guide" aria-labelledby="guide-title">
+        <h2 id="guide-title">Experiência por voz</h2>
+        <p id="welcome-message">
+          Olá! Eu sou o Meus Olhos. Posso conectar você a um voluntário. A descrição
+          de imagens por inteligência artificial ainda não está disponível.
+        </p>
+        <p class="examples">
+          Diga “Preciso de ajuda”, “O que está na minha frente?”, “Leia isso para mim”
+          ou “Cancelar”.
+        </p>
+      </section>
+
+      <section class="permission-panel" aria-labelledby="permission-title">
+        <h2 id="permission-title">Privacidade e permissões</h2>
+        <p>
+          Ao iniciar, o navegador pode pedir acesso ao microfone e à câmera. A câmera
+          só é usada quando você pede ajuda para entender uma imagem. Notificações são
+          opcionais. Imagens não são guardadas. O reconhecimento de fala depende do
+          navegador e pode processar sua voz conforme as configurações dele.
+        </p>
+        <button id="setup-button" class="button button-secondary" type="button">
+          Configurar microfone, câmera e notificações
+        </button>
+        <p id="permission-status" class="permission-status" role="status" aria-live="polite">
+          Nenhuma permissão foi solicitada.
+        </p>
+      </section>
+
+      <div class="actions" aria-label="Ações principais">
+        <button id="listen-button" class="button button-primary" type="button" aria-pressed="false">
+          🎤 FALAR AGORA
+        </button>
+        <button id="welcome-button" class="button button-secondary" type="button">
+          Ouvir instruções
+        </button>
+        <button id="vision-button" class="button button-secondary" type="button">
+          Descrever uma imagem
+        </button>
+        <button id="help-button" class="button button-help" type="button">
+          <span aria-hidden="true">🆘</span> PRECISO DE AJUDA
+        </button>
+      </div>
+
+      <div class="name-form">
+        <label for="user-name">Seu nome (opcional)</label>
+        <input id="user-name" name="userName" autocomplete="name" maxlength="100">
+      </div>
+
+      <section id="request-status" class="status-panel" aria-live="polite" aria-atomic="true" hidden>
+        <h2 id="status-message" class="status-message"></h2>
+        <p id="request-details" class="details"></p>
+        <div id="consent-actions" class="consent-actions" hidden>
+          <button id="consent-yes" class="button button-primary" type="button" aria-describedby="status-message">Sim</button>
+          <button id="consent-no" class="button button-cancel" type="button" aria-describedby="status-message">Não</button>
+        </div>
+        <button id="cancel-button" class="button button-cancel" type="button" hidden>
+          Cancelar pedido
+        </button>
+      </section>
+
+      <p id="connection-status" class="connection-status" role="status" aria-live="polite">
+        Conectando ao serviço…
+      </p>
+      <p id="voice-status" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></p>
+      <video id="camera-preview" class="sr-only" playsinline aria-hidden="true"></video>
+    </main>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/user/app.js" defer></script>
+  </body>
+</html>

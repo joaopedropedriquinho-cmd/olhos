@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#123c4a">
+    <title>Meus Olhos | Painel do voluntário</title>
+    <link rel="stylesheet" href="/volunteer/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/volunteer/" aria-label="Meus Olhos, início">MEUS OLHOS</a>
+      <div class="presence">
+        <span id="presence-dot" class="presence-dot" aria-hidden="true"></span>
+        <span id="presence-label" role="status">Conectando…</span>
+      </div>
+      <button id="toggle-online" class="button button-offline" type="button" disabled>
+        Ficar offline
+      </button>
+    </header>
+
+    <main>
+      <section id="accepted-panel" class="accepted-panel" aria-live="polite" hidden>
+        <p class="eyebrow">ATENDIMENTO</p>
+        <h1>Atendimento aceito</h1>
+        <p id="accepted-details"></p>
+      </section>
+
+      <section aria-labelledby="requests-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">PAINEL DO VOLUNTÁRIO</p>
+            <h1 id="requests-title">Pedidos disponíveis</h1>
+          </div>
+          <span id="request-count" class="count">0 pedidos</span>
+        </div>
+        <p id="empty-state" class="empty-state">Aguardando novos pedidos de ajuda.</p>
+        <div id="request-list" class="request-list" aria-live="polite"></div>
+      </section>
+      <p id="error-message" class="error-message" role="alert" hidden></p>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/volunteer/app.js" defer></script>
+  </body>
+</html>
