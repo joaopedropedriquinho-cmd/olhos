@@ -301,4 +301,5 @@ As rotas HTTP dependem de `RequestService`, que por sua vez usa um repositório 
 `VisionService` valida a imagem e encaminha para o contrato `describeImage` do provedor. `MockVisionProvider` é a implementação ativa: não interpreta, registra ou persiste a imagem; devolve incerteza explícita e o fluxo oferece um voluntário. Para integrar visão posteriormente, substitua esse provedor por um adaptador de servidor que chame um serviço real somente após consentimento. Mantenha chaves em variáveis de ambiente no backend, limite tamanho/formato, não registre conteúdo multimídia e nunca apresente resultados incertos como fatos. A sequência preparada é captura consentida → serviço de visão no backend → descrição textual → fala sintetizada. Áudio reconhecido pertence às APIs do navegador, não é enviado por este backend.
 #   o l h o s  
  #   o l h o s  
+ #   o l h o s  
  
