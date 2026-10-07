@@ -1,3 +1,4 @@
+﻿const API_URL = "https://olhos-xnia.onrender.com";
 const socket = io({ auth: { role: "volunteer" } });
 const requestList = document.querySelector("#request-list");
 const emptyState = document.querySelector("#empty-state");
@@ -18,7 +19,7 @@ socket.on("connect", async () => {
 });
 
 socket.on("disconnect", () => {
-  setPresence(false, "Reconectando…");
+  setPresence(false, "Reconectandoâ€¦");
 });
 
 socket.on("new_request", (request) => {
@@ -40,23 +41,23 @@ toggleOnlineButton.addEventListener("click", () => {
   if (isOnline) {
     isOnline = false;
     socket.disconnect();
-    setPresence(false, "Voluntário offline");
+    setPresence(false, "VoluntÃ¡rio offline");
     toggleOnlineButton.textContent = "Ficar online";
     toggleOnlineButton.className = "button button-online";
   } else {
     isOnline = true;
     toggleOnlineButton.disabled = true;
-    toggleOnlineButton.textContent = "Conectando…";
+    toggleOnlineButton.textContent = "Conectandoâ€¦";
     socket.connect();
   }
 });
 
 async function loadRequests() {
   try {
-    const response = await fetch("/api/requests");
+    const response = await fetch(`${API_URL}/api/requests`);
     const result = await response.json();
     if (!response.ok) {
-      throw new Error(result.error || "Não foi possível carregar os pedidos.");
+      throw new Error(result.error || "NÃ£o foi possÃ­vel carregar os pedidos.");
     }
     for (const request of result.requests) {
       if (request.status === "pending") {
@@ -73,18 +74,18 @@ async function acceptRequest(request) {
   const button = requestList.querySelector(`[data-request-id="${CSS.escape(request.id)}"]`);
   if (button) {
     button.disabled = true;
-    button.textContent = "Aceitando…";
+    button.textContent = "Aceitandoâ€¦";
   }
 
   try {
-    const response = await fetch(`/api/requests/${encodeURIComponent(request.id)}/accept`, {
+    const response = await fetch(`${API_URL}/api/requests/${encodeURIComponent(request.id)}/accept`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ volunteerName: "Voluntário" })
+      body: JSON.stringify({ volunteerName: "VoluntÃ¡rio" })
     });
     const result = await response.json();
     if (!response.ok) {
-      throw new Error(result.error || "Não foi possível aceitar o pedido.");
+      throw new Error(result.error || "NÃ£o foi possÃ­vel aceitar o pedido.");
     }
     requests.delete(request.id);
     acceptedPanel.hidden = false;
@@ -99,7 +100,7 @@ async function acceptRequest(request) {
       button.disabled = false;
       button.textContent = "ACEITAR";
     }
-    if (error.message.includes("não está mais disponível")) {
+    if (error.message.includes("nÃ£o estÃ¡ mais disponÃ­vel")) {
       requests.delete(request.id);
       renderRequests();
     }
@@ -137,13 +138,13 @@ function renderRequests() {
   }`;
 }
 
-function setPresence(online, label = online ? "Voluntário online" : "Voluntário offline") {
+function setPresence(online, label = online ? "VoluntÃ¡rio online" : "VoluntÃ¡rio offline") {
   presenceDot.classList.toggle("online", online);
   presenceLabel.textContent = label;
 }
 
 function formatHelpType(type) {
-  return type === "visual_assistance" ? "assistência visual" : type;
+  return type === "visual_assistance" ? "assistÃªncia visual" : type;
 }
 
 function formatTime(date) {
@@ -157,3 +158,5 @@ function showError(message) {
   errorMessage.textContent = message;
   errorMessage.hidden = !message;
 }
+
+
