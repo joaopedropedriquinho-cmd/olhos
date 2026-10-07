@@ -1,4 +1,4 @@
-const path = require("node:path");
+﻿const path = require("node:path");
 const dotenv = require("dotenv");
 
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
@@ -22,6 +22,14 @@ function isAllowedOrigin(origin, requestHost) {
   }
 
   if (process.env.NODE_ENV === "production") {
+    const allowedProductionOrigins = [
+      "https://olhos-1-ynwb.onrender.com"
+    ];
+
+    if (allowedProductionOrigins.includes(origin)) {
+      return true;
+    }
+
     return false;
   }
 
@@ -38,3 +46,4 @@ module.exports = {
   host: "0.0.0.0",
   isAllowedOrigin
 };
+
