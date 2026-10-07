@@ -1,4 +1,4 @@
-const path = require("node:path");
+﻿const path = require("node:path");
 const http = require("node:http");
 const express = require("express");
 const cors = require("cors");
@@ -20,10 +20,14 @@ const io = new Server(httpServer, {
     origin: true
   },
   allowRequest(request, callback) {
-    callback(
-      null,
-      isAllowedOrigin(request.headers.origin, request.headers.host)
-    );
+    const origin = request.headers.origin;
+
+    const allowed =
+      !origin ||
+      origin === "https://olhos-1-ynwb.onrender.com" ||
+      isAllowedOrigin(origin, request.headers.host);
+
+    callback(null, allowed);
   }
 });
 const realtime = createRealtime(io);
@@ -38,7 +42,7 @@ app.use((req, res, next) => {
       if (isAllowedOrigin(origin, req.get("host"))) {
         return callback(null, true);
       }
-      const error = new Error("Origem não permitida pelo CORS.");
+      const error = new Error("Origem nÃ£o permitida pelo CORS.");
       error.status = 403;
       return callback(error);
     }
@@ -58,7 +62,7 @@ app.use("/volunteer", express.static(path.join(projectRoot, "volunteer")));
 app.get("/", (_req, res) => res.redirect("/user/"));
 
 app.use((error, _req, res, _next) => {
-  console.error("Erro ao processar a requisição:", error);
+  console.error("Erro ao processar a requisiÃ§Ã£o:", error);
   if (res.headersSent) {
     return;
   }
@@ -69,26 +73,27 @@ app.use((error, _req, res, _next) => {
     if (_req.originalUrl.startsWith("/api/mobile/")) {
       return res.status(400).json({
         success: false,
-        message: "O corpo da requisição não é um JSON válido."
+        message: "O corpo da requisiÃ§Ã£o nÃ£o Ã© um JSON vÃ¡lido."
       });
     }
-    return res.status(400).json({ error: "O corpo da requisição não é um JSON válido." });
+    return res.status(400).json({ error: "O corpo da requisiÃ§Ã£o nÃ£o Ã© um JSON vÃ¡lido." });
   }
   if (_req.originalUrl.startsWith("/api/mobile/") && error.status === 413) {
     return res.status(413).json({
       success: false,
-      message: "O conteúdo enviado excede o limite permitido."
+      message: "O conteÃºdo enviado excede o limite permitido."
     });
   }
   if (error.status === 400) {
     return res.status(400).json({ error: error.message });
   }
   if (error.status === 413) {
-    return res.status(413).json({ error: "O conteúdo enviado excede o limite permitido." });
+    return res.status(413).json({ error: "O conteÃºdo enviado excede o limite permitido." });
   }
   return res.status(500).json({ error: "Erro interno do servidor." });
 });
 
 httpServer.listen(port, host, () => {
-  console.log(`Meus Olhos disponível em http://${host}:${port}`);
+  console.log(`Meus Olhos disponÃ­vel em http://${host}:${port}`);
 });
+
