@@ -1,18 +1,18 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#123c4a">
-    <title>Meus Olhos | Painel do voluntário</title>
+    <title>Meus Olhos | Painel do voluntÃ¡rio</title>
     <link rel="stylesheet" href="/volunteer/styles.css">
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/volunteer/" aria-label="Meus Olhos, início">MEUS OLHOS</a>
+      <a class="brand" href="/volunteer/" aria-label="Meus Olhos, inÃ­cio">MEUS OLHOS</a>
       <div class="presence">
         <span id="presence-dot" class="presence-dot" aria-hidden="true"></span>
-        <span id="presence-label" role="status">Conectando…</span>
+        <span id="presence-label" role="status">Conectandoâ€¦</span>
       </div>
       <button id="toggle-online" class="button button-offline" type="button" disabled>
         Ficar offline
@@ -29,8 +29,8 @@
       <section aria-labelledby="requests-title">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">PAINEL DO VOLUNTÁRIO</p>
-            <h1 id="requests-title">Pedidos disponíveis</h1>
+            <p class="eyebrow">PAINEL DO VOLUNTÃRIO</p>
+            <h1 id="requests-title">Pedidos disponÃ­veis</h1>
           </div>
           <span id="request-count" class="count">0 pedidos</span>
         </div>
@@ -40,7 +40,8 @@
       <p id="error-message" class="error-message" role="alert" hidden></p>
     </main>
 
-    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://olhos-xnia.onrender.com/socket.io/socket.io.js"></script>
     <script src="/volunteer/app.js" defer></script>
   </body>
 </html>
+
