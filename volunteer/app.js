@@ -1,5 +1,5 @@
 ﻿const API_URL = "https://olhos-xnia.onrender.com";
-const socket = io({ auth: { role: "volunteer" } });
+const socket = io(API_URL, { auth: { role: "volunteer" } });
 const requestList = document.querySelector("#request-list");
 const emptyState = document.querySelector("#empty-state");
 const requestCount = document.querySelector("#request-count");
@@ -158,5 +158,6 @@ function showError(message) {
   errorMessage.textContent = message;
   errorMessage.hidden = !message;
 }
+
 
 
