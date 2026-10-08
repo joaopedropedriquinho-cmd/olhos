@@ -24,14 +24,87 @@ function geminiResponse(status, payload) {
   };
 }
 
-async function startTestServer(t, aiAnalysisService) {
+async function startTestServer(t, aiAnalysisService, routerOptions) {
   const app = express();
-  app.use("/api/ai", createAiRouter(aiAnalysisService));
+  app.use("/api/ai", createAiRouter(aiAnalysisService, routerOptions));
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   t.after(() => new Promise((resolve) => server.close(resolve)));
   return `http://127.0.0.1:${server.address().port}`;
 }
+
+test("GET /api/ai/diagnostics/models is protected and returns summarized image candidates", async (t) => {
+  const apiKey = "diagnostic-test-key";
+  let upstreamUrl;
+  let upstreamOptions;
+  const baseUrl = await startTestServer(t, {}, {
+    getApiKey: () => apiKey,
+    fetchImpl: async (url, options) => {
+      upstreamUrl = url.toString();
+      upstreamOptions = options;
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              {
+                name: "models/gemini-2.5-flash",
+                displayName: "Gemini 2.5 Flash",
+                supportedGenerationMethods: ["generateContent", "countTokens"],
+                inputTokenLimit: 1_048_576,
+                outputTokenLimit: 8_192,
+                description: "must not be returned"
+              },
+              {
+                name: "models/gemini-tts",
+                displayName: "Gemini TTS",
+                supportedGenerationMethods: ["generateContent"]
+              },
+              {
+                name: "models/gemini-embedding",
+                displayName: "Gemini Embedding",
+                supportedGenerationMethods: ["embedContent"]
+              },
+              {
+                name: "models/gemma-vision",
+                displayName: "Gemma vision",
+                supportedGenerationMethods: ["generateContent"]
+              }
+            ]
+          };
+        }
+      };
+    }
+  });
+
+  const unauthorized = await fetch(`${baseUrl}/api/ai/diagnostics/models`);
+  assert.equal(unauthorized.status, 401);
+  assert.deepEqual(await unauthorized.json(), {
+    success: false,
+    message: "Não autorizado."
+  });
+  assert.equal(upstreamUrl, undefined);
+
+  const response = await fetch(`${baseUrl}/api/ai/diagnostics/models`, {
+    headers: { "x-goog-api-key": apiKey }
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.deepEqual(result, {
+    success: true,
+    imageAnalysisCandidates: [
+      {
+        name: "models/gemini-2.5-flash",
+        displayName: "Gemini 2.5 Flash",
+        supportedGenerationMethods: ["generateContent", "countTokens"],
+        inputTokenLimit: 1_048_576
+      }
+    ]
+  });
+  assert.equal(upstreamUrl, "https://generativelanguage.googleapis.com/v1beta/models");
+  assert.equal(upstreamOptions.headers["x-goog-api-key"], apiKey);
+  assert.doesNotMatch(JSON.stringify(result), /diagnostic-test-key|must not be returned/);
+});
 
 test("POST /api/ai/analyze accepts a base64 data URL and returns a description", async (t) => {
   let receivedImage;

@@ -1,6 +1,8 @@
 const express = require("express");
+const { createHash, timingSafeEqual } = require("node:crypto");
 const { MAX_IMAGE_BYTES, parseImageRequest } = require("./aiAnalysisService");
 
+const GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const FAILURE_RESPONSE = {
   success: false,
   message: "Não foi possível analisar a imagem."
@@ -10,6 +12,79 @@ const QUOTA_FAILURE_RESPONSE = {
   message: "A IA está temporariamente indisponível. Tente novamente mais tarde."
 };
 const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+function matchesApiKey(candidate, configuredKey) {
+  if (!candidate || !configuredKey) {
+    return false;
+  }
+
+  const candidateHash = createHash("sha256").update(candidate).digest();
+  const configuredHash = createHash("sha256").update(configuredKey).digest();
+  return timingSafeEqual(candidateHash, configuredHash);
+}
+
+function summarizeModel(model) {
+  const summary = {
+    name: model.name,
+    displayName: model.displayName,
+    supportedGenerationMethods: Array.isArray(model.supportedGenerationMethods)
+      ? model.supportedGenerationMethods
+      : []
+  };
+
+  if (Number.isInteger(model.inputTokenLimit)) {
+    summary.inputTokenLimit = model.inputTokenLimit;
+  }
+
+  return summary;
+}
+
+async function listImageAnalysisCandidates(apiKey, fetchImpl) {
+  const models = [];
+  let pageToken;
+  const seenPageTokens = new Set();
+
+  do {
+    const url = new URL(GEMINI_MODELS_URL);
+    if (pageToken) {
+      url.searchParams.set("pageToken", pageToken);
+    }
+
+    const response = await fetchImpl(url, {
+      headers: { "x-goog-api-key": apiKey },
+      signal: AbortSignal.timeout(30_000)
+    });
+
+    if (!response.ok) {
+      const error = new Error(`Gemini model listing returned HTTP ${response.status}.`);
+      error.upstreamStatus = response.status;
+      throw error;
+    }
+
+    const body = await response.json();
+    const listedModels = Array.isArray(body.models) ? body.models : [];
+    models.push(
+      ...listedModels.filter(
+        (model) =>
+          typeof model.name === "string" &&
+          /^models\/gemini-/i.test(model.name) &&
+          !/(?:-tts|-live|audio|transcrib|embed)/i.test(model.name) &&
+          Array.isArray(model.supportedGenerationMethods) &&
+          model.supportedGenerationMethods.includes("generateContent")
+      )
+    );
+
+    pageToken = body.nextPageToken;
+    if (pageToken && seenPageTokens.has(pageToken)) {
+      throw new Error("Gemini model listing returned a repeated page token.");
+    }
+    if (pageToken) {
+      seenPageTokens.add(pageToken);
+    }
+  } while (pageToken);
+
+  return models.map(summarizeModel);
+}
 
 function getRequestSizes(req) {
   const declaredBodyBytes = Number(req.get("content-length"));
@@ -39,8 +114,45 @@ function getRequestSizes(req) {
   return `body=${bodyBytes} bytes image=${imageBytes} bytes`;
 }
 
-function createAiRouter(aiAnalysisService) {
+function createAiRouter(
+  aiAnalysisService,
+  { getApiKey = () => process.env.AI_API_KEY, fetchImpl = globalThis.fetch } = {}
+) {
   const router = express.Router();
+
+  router.get("/diagnostics/models", async (req, res) => {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      return res.status(503).json({
+        success: false,
+        message: "O diagnóstico de modelos não está configurado."
+      });
+    }
+    if (!matchesApiKey(req.get("x-goog-api-key"), apiKey)) {
+      return res.status(401).json({
+        success: false,
+        message: "Não autorizado."
+      });
+    }
+
+    try {
+      const models = await listImageAnalysisCandidates(apiKey, fetchImpl);
+      return res.json({
+        success: true,
+        imageAnalysisCandidates: models
+      });
+    } catch (error) {
+      console.error(
+        `Falha ao consultar modelos Gemini${Number.isInteger(error.upstreamStatus)
+          ? ` HTTP ${error.upstreamStatus}`
+          : ""}.`
+      );
+      return res.status(502).json({
+        success: false,
+        message: "Não foi possível consultar os modelos Gemini."
+      });
+    }
+  });
 
   router.post(
     "/analyze",
