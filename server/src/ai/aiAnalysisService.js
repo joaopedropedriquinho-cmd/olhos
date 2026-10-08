@@ -62,13 +62,36 @@ function parseImageRequest(req) {
   return validateImage(buffer, mimeType);
 }
 
+function sanitizeServiceError(error, provider, image) {
+  let message = error instanceof Error ? error.message : "Erro desconhecido.";
+  const apiKey = provider.apiKey;
+  if (apiKey) {
+    message = message.split(apiKey).join("[API_KEY_REDACTED]");
+  }
+
+  if (image?.buffer) {
+    const imageBase64 = image.buffer.toString("base64");
+    message = message.split(imageBase64).join("[IMAGE_DATA_REDACTED]");
+  }
+
+  return message
+    .replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+/gi, "[IMAGE_DATA_REDACTED]")
+    .replace(/[A-Za-z0-9+/]{128,}={0,2}/g, "[BASE64_REDACTED]")
+    .slice(0, 1_000);
+}
+
 class AiAnalysisService {
   constructor(provider) {
     this.provider = provider;
   }
 
   async analyzeImage(image) {
-    return this.provider.describeImage(image);
+    try {
+      return await this.provider.describeImage(image);
+    } catch (error) {
+      console.error(`[AI SERVICE ERROR] ${sanitizeServiceError(error, this.provider, image)}`);
+      throw error;
+    }
   }
 }
 

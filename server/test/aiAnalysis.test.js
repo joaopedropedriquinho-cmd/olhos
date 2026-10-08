@@ -49,6 +49,40 @@ test("POST /api/ai/analyze accepts a base64 data URL and returns a description",
   assert.deepEqual(receivedImage.buffer, PNG_IMAGE);
 });
 
+test("successful analysis logs each stage and only request sizes", async (t) => {
+  const service = new AiAnalysisService({
+    async describeImage() {
+      return "Uma mesa está à frente.";
+    }
+  });
+  const baseUrl = await startTestServer(t, service);
+  const originalConsoleInfo = console.info;
+  const logs = [];
+  console.info = (...args) => logs.push(args.join(" "));
+
+  try {
+    const response = await fetch(`${baseUrl}/api/ai/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      body: PNG_IMAGE
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      success: true,
+      description: "Uma mesa está à frente."
+    });
+  } finally {
+    console.info = originalConsoleInfo;
+  }
+
+  assert.ok(logs.includes("[AI] request received"));
+  assert.ok(logs.includes("[AI] content-type=image/png"));
+  assert.ok(logs.includes("[AI] body/image size=body=9 bytes image=9 bytes"));
+  assert.ok(logs.includes("[AI] calling analysis service"));
+  assert.ok(logs.includes("[GEMINI] success"));
+  assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
+});
+
 test("POST /api/ai/analyze accepts a raw image and rejects invalid input", async (t) => {
   const service = new AiAnalysisService({
     async describeImage() {
@@ -136,8 +170,10 @@ test("Gemini HTTP errors are logged with status and sanitized response body", as
   });
   const baseUrl = await startTestServer(t, new AiAnalysisService(provider));
   const originalConsoleError = console.error;
+  const originalConsoleInfo = console.info;
   const logMessages = [];
   console.error = (...args) => logMessages.push(args.join(" "));
+  console.info = (...args) => logMessages.push(args.join(" "));
 
   try {
     const response = await fetch(`${baseUrl}/api/ai/analyze`, {
@@ -153,15 +189,50 @@ test("Gemini HTTP errors are logged with status and sanitized response body", as
     });
   } finally {
     console.error = originalConsoleError;
+    console.info = originalConsoleInfo;
   }
 
+  assert.ok(logMessages.includes("[GEMINI] request starting"));
+  assert.ok(logMessages.includes("[GEMINI] response status=403"));
   assert.ok(logMessages.includes("[GEMINI ERROR] status=403"));
   assert.ok(logMessages.some((message) => message.includes("[GEMINI ERROR] body=")));
+  assert.ok(logMessages.some((message) => message.startsWith("[AI SERVICE ERROR]")));
   const loggedDiagnostics = logMessages.join("\n");
   assert.match(loggedDiagnostics, /Invalid key \[API_KEY_REDACTED\]/);
   assert.match(loggedDiagnostics, /\[IMAGE_DATA_REDACTED\]/);
   assert.doesNotMatch(loggedDiagnostics, new RegExp(apiKey));
   assert.doesNotMatch(loggedDiagnostics, new RegExp(PNG_IMAGE.toString("base64")));
+});
+
+test("Gemini logs response status after receiving a successful response", async () => {
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({ output_text: "Descrição de teste." });
+      }
+    })
+  });
+  const originalConsoleInfo = console.info;
+  const logs = [];
+  console.info = (...args) => logs.push(args.join(" "));
+
+  try {
+    const description = await provider.describeImage({
+      buffer: PNG_IMAGE,
+      mimeType: "image/png"
+    });
+    assert.equal(description, "Descrição de teste.");
+  } finally {
+    console.info = originalConsoleInfo;
+  }
+
+  assert.deepEqual(logs, [
+    "[GEMINI] request starting",
+    "[GEMINI] response status=200"
+  ]);
 });
 
 test("image validation enforces the 5 MiB limit", () => {
@@ -182,8 +253,9 @@ test("Gemini provider sends the image and accessibility prompt to the configured
       requestOptions = options;
       return {
         ok: true,
-        async json() {
-          return { output_text: "Uma placa informa a saída." };
+        status: 200,
+        async text() {
+          return JSON.stringify({ output_text: "Uma placa informa a saída." });
         }
       };
     }

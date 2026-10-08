@@ -62,32 +62,45 @@ class GeminiVisionProvider {
     }
 
     const imageBase64 = buffer.toString("base64");
-    const response = await this.fetchImpl(GEMINI_INTERACTIONS_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": this.apiKey
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        input: [
-          { type: "text", text: DESCRIPTION_PROMPT },
-          {
-            type: "image",
-            data: imageBase64,
-            mime_type: mimeType
-          }
-        ]
-      }),
-      signal: AbortSignal.timeout(30_000)
-    });
+    console.info("[GEMINI] request starting");
+    let response;
+    try {
+      response = await this.fetchImpl(GEMINI_INTERACTIONS_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": this.apiKey
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          input: [
+            { type: "text", text: DESCRIPTION_PROMPT },
+            {
+              type: "image",
+              data: imageBase64,
+              mime_type: mimeType
+            }
+          ]
+        }),
+        signal: AbortSignal.timeout(30_000)
+      });
+    } catch (cause) {
+      const error = new Error("Falha de comunicação com a Gemini API.");
+      error.upstreamBody = sanitizeErrorBody(
+        cause instanceof Error ? cause.message : "Falha de rede desconhecida.",
+        this.apiKey,
+        imageBase64
+      );
+      throw error;
+    }
 
+    console.info(`[GEMINI] response status=${response.status}`);
     if (!response.ok) {
       let responseBody;
       try {
         responseBody = await response.text();
-      } catch (error) {
-        responseBody = `Não foi possível ler o corpo de erro da Gemini: ${error.message}`;
+      } catch {
+        responseBody = "Não foi possível ler o corpo de erro da Gemini.";
       }
 
       const error = new Error(`Gemini API respondeu HTTP ${response.status}.`);
@@ -96,10 +109,32 @@ class GeminiVisionProvider {
       throw error;
     }
 
-    const responseBody = await response.json();
+    let responseText;
+    try {
+      responseText = await response.text();
+    } catch {
+      const error = new Error("Não foi possível ler a resposta da Gemini API.");
+      error.upstreamStatus = response.status;
+      error.upstreamBody = "Não foi possível ler o corpo da resposta.";
+      throw error;
+    }
+
+    let responseBody;
+    try {
+      responseBody = JSON.parse(responseText);
+    } catch {
+      const error = new Error("Gemini API retornou uma resposta JSON inválida.");
+      error.upstreamStatus = response.status;
+      error.upstreamBody = sanitizeErrorBody(responseText, this.apiKey, imageBase64);
+      throw error;
+    }
+
     const description = extractDescription(responseBody);
     if (!description) {
-      throw new Error("Gemini API não retornou uma descrição.");
+      const error = new Error("Gemini API não retornou uma descrição.");
+      error.upstreamStatus = response.status;
+      error.upstreamBody = sanitizeErrorBody(responseText, this.apiKey, imageBase64);
+      throw error;
     }
 
     return description;
