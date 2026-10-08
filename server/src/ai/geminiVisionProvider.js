@@ -1,8 +1,7 @@
 const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
-const MODEL = "gemini-3.8-flash";
-const FALLBACK_MODEL = "gemini-3.7-flash";
-const SECOND_FALLBACK_MODEL = "gemini-3.6-flash";
-const REQUEST_TIMEOUT_MS = 30_000;
+const MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"];
+const MAX_MODEL_ATTEMPTS = 3;
+const REQUEST_TIMEOUT_MS = 10_000;
 const DESCRIPTION_PROMPT =
   "Descreva esta imagem em português brasileiro para uma pessoa cega. " +
   "Seja objetivo, conciso e use frases naturais, adequadas para leitura em voz alta. " +
@@ -77,7 +76,7 @@ class GeminiVisionProvider {
     const imageBase64 = buffer.toString("base64");
     const requestModel = async (model) => {
       const requestStartedAt = Date.now();
-      console.info(`[GEMINI] request starting model=${model}`);
+      console.info(`[GEMINI] tentando modelo=${model}`);
       let response;
       try {
         response = await this.fetchImpl(GEMINI_INTERACTIONS_URL, {
@@ -121,8 +120,11 @@ class GeminiVisionProvider {
       console.info(
         `[GEMINI] request finished in ${Date.now() - requestStartedAt} ms status=${response.status}`
       );
-      console.info(`[GEMINI] response status=${response.status}`);
+      console.info(`[GEMINI] modelo=${model} status=${response.status}`);
       if (!response.ok) {
+        if (response.status === 429) {
+          console.warn("[GEMINI] quota/rate limit detectado");
+        }
         const error = new Error(`Gemini API respondeu HTTP ${response.status}.`);
         error.upstreamStatus = response.status;
         throw error;
@@ -160,20 +162,27 @@ class GeminiVisionProvider {
     const isRetryableUnavailable = (error) =>
       error.upstreamStatus === 503 || error.retryableUnavailable === true;
 
-    const models = [MODEL, FALLBACK_MODEL, SECOND_FALLBACK_MODEL];
+    const models = MODELS.slice(0, MAX_MODEL_ATTEMPTS);
     for (let index = 0; index < models.length; index += 1) {
-      if (index === 1) {
-        console.info("[GEMINI] primary model unavailable, trying fallback model");
-      } else if (index === 2) {
-        console.info("[GEMINI] fallback model unavailable, trying second fallback");
-      }
-
       try {
         return await requestModel(models[index]);
       } catch (error) {
-        if (!isRetryableUnavailable(error) || index === models.length - 1) {
+        if (error.upstreamStatus === 429) {
+          console.warn("[GEMINI] modelo=" + models[index] + " recebeu 429; não tentará outros modelos");
+          console.warn("[GEMINI] nenhum modelo disponível");
           throw error;
         }
+
+        if (!isRetryableUnavailable(error)) {
+          throw error;
+        }
+
+        if (index === models.length - 1) {
+          console.warn("[GEMINI] nenhum modelo disponível");
+          throw error;
+        }
+
+        console.warn("[GEMINI] modelo=" + models[index] + " indisponível, tentando próximo");
       }
     }
 
