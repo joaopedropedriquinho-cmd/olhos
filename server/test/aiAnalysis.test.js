@@ -1,6 +1,8 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const { once } = require("node:events");
 const express = require("express");
+const sharp = require("sharp");
 const { test } = require("node:test");
 const createAiRouter = require("../src/ai/aiRoutes");
 const {
@@ -15,6 +17,16 @@ const PNG_IMAGE = Buffer.from([
 ]);
 const JPEG_IMAGE = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
 const WEBP_IMAGE = Buffer.from("RIFF0000WEBP", "ascii");
+const GEMINI_IMAGE_TARGET_BYTES = 1.5 * 1024 * 1024;
+
+async function createDetailedJpeg() {
+  const width = 1800;
+  const height = 1400;
+  const pixels = crypto.randomBytes(width * height * 3);
+  return sharp(pixels, { raw: { width, height, channels: 3 } })
+    .jpeg({ quality: 96 })
+    .toBuffer();
+}
 
 function geminiResponse(status, payload) {
   return {
@@ -144,6 +156,33 @@ test("POST /api/ai/analyze accepts a base64 data URL and returns a description",
   });
   assert.equal(receivedImage.mimeType, "image/png");
   assert.deepEqual(receivedImage.buffer, PNG_IMAGE);
+});
+
+test("POST /api/ai/analyze accepts a base64 image larger than 5 MiB within the 8 MiB limit", async (t) => {
+  const largeImage = Buffer.alloc(6 * 1024 * 1024);
+  PNG_IMAGE.subarray(0, 8).copy(largeImage);
+  let receivedBytes;
+  const service = new AiAnalysisService({
+    async describeImage(image) {
+      receivedBytes = image.buffer.length;
+      return "Imagem recebida.";
+    }
+  });
+  const baseUrl = await startTestServer(t, service);
+  const dataUrl = `data:image/png;base64,${largeImage.toString("base64")}`;
+
+  const response = await fetch(`${baseUrl}/api/ai/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageDataUrl: dataUrl })
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    success: true,
+    description: "Imagem recebida."
+  });
+  assert.equal(receivedBytes, largeImage.length);
 });
 
 test("successful analysis logs each stage and only request sizes", async (t) => {
@@ -309,7 +348,7 @@ test("POST /api/ai/ask-image rejects missing or invalid questions and invalid im
   });
 });
 
-test("POST /api/ai/ask-image rejects images larger than 5 MiB", async (t) => {
+test("POST /api/ai/ask-image rejects images larger than 8 MiB", async (t) => {
   const service = new AiAnalysisService({
     async answerQuestion() {
       throw new Error("Oversized image should not reach Gemini.");
@@ -1222,12 +1261,79 @@ test("Gemini timeout logs elapsed milliseconds without exposing request data", a
   assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
 });
 
-test("image validation enforces the 5 MiB limit", () => {
+test("image validation enforces the 8 MiB limit", () => {
   const oversizedImage = Buffer.alloc(MAX_IMAGE_BYTES + 1, 0);
   assert.throws(
     () => parseImageRequest({ body: oversizedImage, is: () => "image/png" }),
     (error) => error.status === 413
   );
+});
+
+test("Gemini sends small images unchanged", async () => {
+  let requestBody;
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return geminiResponse(200, { output_text: "Descrição." });
+    }
+  });
+
+  await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" });
+  assert.equal(requestBody.input[1].mime_type, "image/png");
+  assert.equal(requestBody.input[1].data, PNG_IMAGE.toString("base64"));
+});
+
+test("Gemini compresses large images to at most 1.5 MiB as a valid JPEG", async () => {
+  const original = await createDetailedJpeg();
+  assert.ok(original.length > GEMINI_IMAGE_TARGET_BYTES);
+  assert.ok(original.length <= MAX_IMAGE_BYTES);
+  let requestBody;
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body);
+      return geminiResponse(200, { output_text: "Descrição." });
+    }
+  });
+
+  await provider.describeImage({ buffer: original, mimeType: "image/jpeg" });
+
+  const sentImage = Buffer.from(requestBody.input[1].data, "base64");
+  const sentMetadata = await sharp(sentImage).metadata();
+  assert.ok(sentImage.length <= GEMINI_IMAGE_TARGET_BYTES);
+  assert.ok(sentImage.length < original.length);
+  assert.equal(requestBody.input[1].mime_type, "image/jpeg");
+  assert.equal(sentMetadata.format, "jpeg");
+  assert.ok(sentMetadata.width <= 2560);
+  assert.ok(sentMetadata.height <= 2560);
+});
+
+test("Gemini accepts PNG and WebP input images", async () => {
+  for (const format of ["png", "webp"]) {
+    const original = await sharp({
+      create: {
+        width: 32,
+        height: 24,
+        channels: 3,
+        background: { r: 30, g: 120, b: 210 }
+      }
+    })
+      .toFormat(format)
+      .toBuffer();
+    let requestBody;
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async (_url, options) => {
+        requestBody = JSON.parse(options.body);
+        return geminiResponse(200, { output_text: "Descrição." });
+      }
+    });
+
+    await provider.describeImage({ buffer: original, mimeType: `image/${format}` });
+    assert.equal(requestBody.input[1].mime_type, `image/${format}`);
+    assert.equal(requestBody.input[1].data, original.toString("base64"));
+  }
 });
 
 test("Gemini provider sends the image and accessibility prompt to the configured model", async () => {

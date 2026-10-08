@@ -11,6 +11,7 @@ const QUOTA_FAILURE_RESPONSE = {
   message: "A IA está temporariamente indisponível. Tente novamente mais tarde."
 };
 const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_QUESTION_LENGTH = 1_000;
 
 function summarizeModel(model) {
   const summary = {
@@ -103,6 +104,16 @@ function getRequestSizes(req) {
   return `body=${bodyBytes} bytes image=${imageBytes} bytes`;
 }
 
+function getImageQuestion(req) {
+  const question = req.query.question;
+  if (typeof question !== "string" || !question.trim() || question.length > MAX_QUESTION_LENGTH) {
+    const error = new Error("Pergunta ausente ou inválida.");
+    error.status = 400;
+    throw error;
+  }
+  return question.trim();
+}
+
 function createAiRouter(
   aiAnalysisService,
   { getApiKey = () => process.env.AI_API_KEY, fetchImpl = globalThis.fetch } = {}
@@ -138,6 +149,52 @@ function createAiRouter(
   });
 
   router.post(
+    "/ask-image",
+    (req, _res, next) => {
+      console.info("[AI ASK] request received");
+      next();
+    },
+    express.raw({
+      type: [...IMAGE_MIME_TYPES, "application/x-www-form-urlencoded"],
+      limit: MAX_IMAGE_BYTES
+    }),
+    async (req, res) => {
+      try {
+        const image = parseImageRequest(req);
+        const question = getImageQuestion(req);
+        console.info(`[AI ASK] image size=${image.buffer.length} bytes mime=${image.mimeType}`);
+        console.info("[AI ASK] question received");
+        console.info("[AI ASK] calling Gemini");
+        const answer = await aiAnalysisService.askImage(image, question);
+        console.info("[AI ASK] Gemini response status=200");
+        return res.json({ success: true, answer });
+      } catch (error) {
+        if (Number.isInteger(error.upstreamStatus) || error.upstreamBody) {
+          const status = Number.isInteger(error.upstreamStatus)
+            ? error.upstreamStatus
+            : "unavailable";
+          console.error(`[GEMINI ERROR] status=${status}`);
+        }
+
+        if (error.upstreamStatus === 429) {
+          return res.status(503).json(QUOTA_FAILURE_RESPONSE);
+        }
+
+        const status = error.status || (error.code === "AI_API_KEY_MISSING" ? 503 : 502);
+        if (error.code === "AI_API_KEY_MISSING") {
+          console.error("AI_API_KEY não está configurada para análise de imagem.");
+        } else if (!error.status) {
+          const upstreamStatus = Number.isInteger(error.upstreamStatus)
+            ? ` HTTP ${error.upstreamStatus}`
+            : "";
+          console.error(`Não foi possível concluir a pergunta sobre a imagem.${upstreamStatus}`);
+        }
+        return res.status(status).json(FAILURE_RESPONSE);
+      }
+    }
+  );
+
+  router.post(
     "/analyze",
     (req, _res, next) => {
       console.info("[AI] request received");
@@ -148,7 +205,7 @@ function createAiRouter(
       type: [...IMAGE_MIME_TYPES, "application/x-www-form-urlencoded"],
       limit: MAX_IMAGE_BYTES
     }),
-    express.json({ limit: "7mb" }),
+    express.json({ limit: "11mb" }),
     (req, _res, next) => {
       console.info(`[AI] body/image size=${getRequestSizes(req)}`);
       next();

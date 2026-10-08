@@ -1,3 +1,5 @@
+const sharp = require("sharp");
+
 const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const GEMINI_GENERATE_CONTENT_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -13,6 +15,9 @@ const MODELS = [
 ];
 const MAX_MODEL_ATTEMPTS = 8;
 const REQUEST_TIMEOUT_MS = 20_000;
+const GEMINI_IMAGE_TARGET_BYTES = 1.5 * 1024 * 1024;
+const JPEG_QUALITIES = [88, 80, 72, 64, 56, 48, 40, 32];
+const MAX_IMAGE_DIMENSIONS = [2560, 2240, 1920, 1664, 1440, 1280, 1024, 768, 512];
 const GENERATE_CONTENT_MODELS = [
   "gemini-2.5-flash-lite",
   "gemini-3.5-flash-lite",
@@ -133,6 +138,56 @@ function extractGenerateContentText(responseBody) {
     .join("\n");
 }
 
+async function prepareImageForGemini({ buffer, mimeType }) {
+  if (buffer.length <= GEMINI_IMAGE_TARGET_BYTES) {
+    return { buffer, mimeType };
+  }
+
+  let metadata;
+  try {
+    metadata = await sharp(buffer, { limitInputPixels: 80_000_000 }).metadata();
+  } catch {
+    const error = new Error("A imagem recebida não pôde ser processada.");
+    error.status = 400;
+    throw error;
+  }
+
+  const expectedFormat = {
+    "image/jpeg": "jpeg",
+    "image/png": "png",
+    "image/webp": "webp"
+  }[mimeType];
+  if (!expectedFormat || metadata.format !== expectedFormat) {
+    const error = new Error("O formato real da imagem não corresponde ao tipo informado.");
+    error.status = 400;
+    throw error;
+  }
+
+  for (const maxDimension of MAX_IMAGE_DIMENSIONS) {
+    for (const quality of JPEG_QUALITIES) {
+      const output = await sharp(buffer, { limitInputPixels: 80_000_000 })
+        .rotate()
+        .resize({
+          width: maxDimension,
+          height: maxDimension,
+          fit: "inside",
+          withoutEnlargement: true
+        })
+        .flatten({ background: "#ffffff" })
+        .jpeg({ quality, mozjpeg: true })
+        .toBuffer();
+
+      if (output.length <= GEMINI_IMAGE_TARGET_BYTES) {
+        return { buffer: output, mimeType: "image/jpeg" };
+      }
+    }
+  }
+
+  const error = new Error("Não foi possível reduzir a imagem ao tamanho aceito pela Gemini.");
+  error.status = 413;
+  throw error;
+}
+
 class GeminiVisionProvider {
   constructor({ apiKey = process.env.AI_API_KEY, fetchImpl = globalThis.fetch } = {}) {
     this.apiKey = apiKey;
@@ -158,7 +213,8 @@ class GeminiVisionProvider {
       throw new Error("A API fetch do Node.js não está disponível.");
     }
 
-    const imageBase64 = buffer.toString("base64");
+    const geminiImage = await prepareImageForGemini({ buffer, mimeType });
+    const imageBase64 = geminiImage.buffer.toString("base64");
     const generateContentResponse = async () => {
       let lastError;
       const models = GENERATE_CONTENT_MODELS.slice(0, GENERATE_CONTENT_MAX_ATTEMPTS);
@@ -184,7 +240,7 @@ class GeminiVisionProvider {
                       { text: prompt },
                       {
                         inline_data: {
-                          mime_type: mimeType,
+                          mime_type: geminiImage.mimeType,
                           data: imageBase64
                         }
                       }
@@ -292,7 +348,7 @@ class GeminiVisionProvider {
               {
                 type: "image",
                 data: imageBase64,
-                mime_type: mimeType
+                mime_type: geminiImage.mimeType
               }
             ]
           }),

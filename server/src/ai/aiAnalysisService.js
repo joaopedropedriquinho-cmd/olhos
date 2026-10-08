@@ -1,6 +1,5 @@
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const IMAGE_DATA_URL_PATTERN =
-  /^data:(image\/(?:jpeg|png|webp));base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const IMAGE_DATA_URL_HEADER_PATTERN = /^data:(image\/(?:jpeg|png|webp));base64,/;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function invalidImage(status = 400) {
@@ -60,12 +59,17 @@ function parseImageRequest(req) {
     throw invalidImage();
   }
 
-  const match = IMAGE_DATA_URL_PATTERN.exec(dataUrl);
+  const match = IMAGE_DATA_URL_HEADER_PATTERN.exec(dataUrl);
   if (!match) {
     throw invalidImage();
   }
 
-  const [, mimeType, base64] = match;
+  const [, mimeType] = match;
+  const base64 = dataUrl.slice(match[0].length);
+  if (base64.length > 4 * Math.ceil(MAX_IMAGE_BYTES / 3)) {
+    throw invalidImage(413);
+  }
+
   const buffer = Buffer.from(base64, "base64");
   if (buffer.toString("base64") !== base64) {
     throw invalidImage();
@@ -102,6 +106,18 @@ class AiAnalysisService {
       return await this.provider.describeImage(image);
     } catch (error) {
       console.error(`[AI SERVICE ERROR] ${sanitizeServiceError(error, this.provider, image)}`);
+      throw error;
+    }
+  }
+
+  async askImage(image, question) {
+    try {
+      return await this.provider.answerQuestion(image, question);
+    } catch (error) {
+      const status = Number.isInteger(error.upstreamStatus)
+        ? error.upstreamStatus
+        : error.code || "unavailable";
+      console.error(`[AI ASK SERVICE ERROR] status=${status}`);
       throw error;
     }
   }
