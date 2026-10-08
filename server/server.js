@@ -11,6 +11,9 @@ const createRealtime = require("./src/realtime");
 const MockVisionProvider = require("./src/assistant/mockVisionProvider");
 const VisionService = require("./src/assistant/visionService");
 const createAssistantRouter = require("./src/assistant/assistantRoutes");
+const { AiAnalysisService } = require("./src/ai/aiAnalysisService");
+const GeminiVisionProvider = require("./src/ai/geminiVisionProvider");
+const createAiRouter = require("./src/ai/aiRoutes");
 const createMobileRouter = require("./src/mobile/mobileRoutes");
 
 const app = express();
@@ -34,6 +37,7 @@ const realtime = createRealtime(io);
 const requestRepository = new InMemoryRequestRepository();
 const requestService = new RequestService(requestRepository, realtime);
 const visionService = new VisionService(new MockVisionProvider());
+const aiAnalysisService = new AiAnalysisService(new GeminiVisionProvider());
 const projectRoot = path.resolve(__dirname, "..");
 
 app.use((req, res, next) => {
@@ -48,6 +52,7 @@ app.use((req, res, next) => {
     }
   })(req, res, next);
 });
+app.use("/api/ai", createAiRouter(aiAnalysisService));
 app.use(express.json({ limit: "3mb" }));
 
 app.get("/api/health", (_req, res) => {
@@ -96,4 +101,3 @@ app.use((error, _req, res, _next) => {
 httpServer.listen(port, host, () => {
   console.log(`Meus Olhos disponÃ­vel em http://${host}:${port}`);
 });
-

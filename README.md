@@ -112,11 +112,44 @@ Essa página web não substitui a integração de permissões nativas do futuro 
 | `POST` | `/api/requests/:id/accept` | Aceita pedido pendente; nome opcional via `volunteerName` |
 | `POST` | `/api/requests/:id/cancel` | Cancela pedido pendente |
 | `POST` | `/api/assistant/vision` | Encaminha uma imagem JPEG consentida à camada de visão; o provedor atual responde indisponível, sem analisar ou guardar a imagem |
+| `POST` | `/api/ai/analyze` | Analisa uma imagem JPEG, PNG ou WebP com Gemini e retorna uma descrição concisa em português |
 | `POST` | `/api/mobile/request-help` | Cria pedido para o aplicativo Android |
 | `GET` | `/api/mobile/request-status/:id` | Consulta estado atual e voluntário do pedido |
 | `POST` | `/api/mobile/cancel/:id` | Cancela pedido Android ainda pendente |
 
 Pedidos passam pelos estados `pending`, `accepted` e `cancelled`. Um pedido só pode ser aceito ou cancelado uma vez.
+
+### Analisar uma imagem com IA
+
+Configure `AI_API_KEY` no ambiente do backend (no Render, em **Environment**) com uma chave criada no [Google AI Studio](https://aistudio.google.com/apikey). O backend usa o modelo `gemini-3.8-flash` pela API REST oficial; não é necessário instalar um SDK Node.js. A cota gratuita não exige configurar cobrança, mas tem limites variáveis por projeto e modelo, visíveis no [AI Studio](https://aistudio.google.com/rate-limit). Não vincule uma conta de cobrança se quiser permanecer na faixa gratuita.
+
+O serviço gratuito do Gemini pode usar entradas e respostas para melhorar produtos e pode permitir revisão humana. Não envie imagens pessoais, sensíveis ou confidenciais por essa faixa. Os termos do Gemini API também restringem aplicações destinadas ou provavelmente acessadas por menores de 18 anos. Confirme que o uso e as imagens de teste são compatíveis com os [termos atuais](https://ai.google.dev/gemini-api/terms).
+
+Envie o arquivo bruto com `Content-Type: image/jpeg`, `image/png` ou `image/webp` (limite de 5 MiB), ou envie JSON com `imageDataUrl` em base64. As imagens são mantidas apenas em memória durante a requisição e não são gravadas em disco.
+
+Exemplo no PowerShell, usando uma imagem local:
+
+```powershell
+$bytes = [IO.File]::ReadAllBytes(".\foto.jpg")
+$dataUrl = "data:image/jpeg;base64," + [Convert]::ToBase64String($bytes)
+$body = @{ imageDataUrl = $dataUrl } | ConvertTo-Json -Compress
+Invoke-RestMethod `
+  -Uri https://olhos-xnia.onrender.com/api/ai/analyze `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Exemplo equivalente enviando os bytes da imagem:
+
+```powershell
+curl.exe --request POST `
+  --url https://olhos-xnia.onrender.com/api/ai/analyze `
+  --header "Content-Type: image/jpeg" `
+  --data-binary "@foto.jpg"
+```
+
+Resposta de sucesso: `{"success":true,"description":"..."}`. Imagem inválida, indisponibilidade ou falta da chave retornam `success: false` e uma mensagem genérica. Se a Gemini API retornar limite/cota excedida (`429`), a rota responde `503` com `{"success":false,"message":"A IA está temporariamente indisponível. Tente novamente mais tarde."}`. A cota grátis tem limites variáveis por projeto e modelo; não configure faturamento ou recarga automática para manter o projeto na faixa gratuita.
 
 ## Integração Android com MIT App Inventor
 
@@ -297,8 +330,7 @@ O Render fornece `PORT` automaticamente. O servidor usa essa variável e escuta 
 As rotas HTTP dependem de `RequestService`, que por sua vez usa um repositório com operações de criação, listagem, busca e atualização. `InMemoryRequestRepository` é a implementação atual e mantém os pedidos apenas enquanto o processo estiver ativo. Para migrar, implemente o mesmo contrato com Supabase e injete essa implementação no `server.js`; a API e as páginas não precisam conhecer o mecanismo de persistência. A associação temporária entre o socket do solicitante e o pedido fica isolada no módulo de tempo real, não no registro persistido.
 
 ## Arquitetura de IA e privacidade
-
-`VisionService` valida a imagem e encaminha para o contrato `describeImage` do provedor. `MockVisionProvider` é a implementação ativa: não interpreta, registra ou persiste a imagem; devolve incerteza explícita e o fluxo oferece um voluntário. Para integrar visão posteriormente, substitua esse provedor por um adaptador de servidor que chame um serviço real somente após consentimento. Mantenha chaves em variáveis de ambiente no backend, limite tamanho/formato, não registre conteúdo multimídia e nunca apresente resultados incertos como fatos. A sequência preparada é captura consentida → serviço de visão no backend → descrição textual → fala sintetizada. Áudio reconhecido pertence às APIs do navegador, não é enviado por este backend.
+`/api/assistant/vision` e `MockVisionProvider` permanecem inalterados. A nova rota `POST /api/ai/analyze` valida JPEG, PNG e WebP (até 5 MiB), envia a imagem em memória para Gemini e retorna uma descrição textual; não grava a imagem em disco. Mantenha `AI_API_KEY` apenas no backend. Na faixa gratuita, o provedor pode usar entradas para melhorar os serviços, portanto não envie imagens pessoais, sensíveis ou confidenciais e confira as restrições de idade nos termos vigentes.
 #   o l h o s  
  #   o l h o s  
  #   o l h o s  
