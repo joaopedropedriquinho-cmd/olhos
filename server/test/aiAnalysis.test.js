@@ -789,15 +789,20 @@ test("Gemini advances from two temporarily unavailable models to gemini-3.6-flas
   );
 });
 
-test("Gemini stops after eight temporary failures", async () => {
+test("Gemini limits temporary failures to eight Interactions and four Generate Content attempts", async () => {
   const requestedModels = [];
+  const originalConsoleInfo = console.info;
   const originalConsoleWarn = console.warn;
   const logs = [];
+  console.info = (...args) => logs.push(args.join(" "));
   console.warn = (...args) => logs.push(args.join(" "));
   const provider = new GeminiVisionProvider({
     apiKey: "test-key",
-    fetchImpl: async (_url, options) => {
-      requestedModels.push(JSON.parse(options.body).model);
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      requestedModels.push(
+        body.model || url.toString().match(/models\/([^:]+):generateContent/)[1]
+      );
       return geminiResponse(503, { error: { message: "Model unavailable" } });
     }
   });
@@ -808,6 +813,7 @@ test("Gemini stops after eight temporary failures", async () => {
       (error) => error.upstreamStatus === 503
     );
   } finally {
+    console.info = originalConsoleInfo;
     console.warn = originalConsoleWarn;
   }
 
@@ -819,10 +825,16 @@ test("Gemini stops after eight temporary failures", async () => {
     "gemini-3.1-flash-lite",
     "gemini-2.5-flash-lite",
     "gemini-flash-lite-latest",
-    "gemini-flash-latest"
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash"
   ]);
-  assert.equal(requestedModels.length, 8);
-  assert.ok(logs.includes("[GEMINI] nenhum modelo disponível"));
+  assert.equal(requestedModels.length, 12);
+  assert.ok(
+    logs.some((entry) => entry.startsWith("[GEMINI] nenhum modelo disponível"))
+  );
 });
 
 test("Gemini stops after the first 429 and logs the rate limit without trying fallbacks", async () => {
@@ -836,8 +848,11 @@ test("Gemini stops after the first 429 and logs the rate limit without trying fa
   try {
     const provider = new GeminiVisionProvider({
       apiKey: "test-key",
-      fetchImpl: async (_url, options) => {
-        requestedModels.push(JSON.parse(options.body).model);
+      fetchImpl: async (url, options) => {
+        const body = JSON.parse(options.body);
+        requestedModels.push(
+          body.model || url.toString().match(/models\/([^:]+):generateContent/)[1]
+        );
         return geminiResponse(429, { error: { message: "Quota exceeded" } });
       }
     });
@@ -851,10 +866,10 @@ test("Gemini stops after the first 429 and logs the rate limit without trying fa
     console.warn = originalConsoleWarn;
   }
 
-  assert.deepEqual(requestedModels, ["gemini-3.8-flash"]);
+  assert.deepEqual(requestedModels, ["gemini-3.8-flash", "gemini-2.5-flash-lite"]);
   assert.ok(logs.includes("[GEMINI] modelo=gemini-3.8-flash status=429"));
   assert.ok(logs.includes("[GEMINI] quota/rate limit detectado no modelo=gemini-3.8-flash"));
-  assert.ok(logs.includes("[GEMINI] quota global detectada, encerrando"));
+  assert.ok(logs.includes("[GEMINI] quota global detectada, tentando Generate Content"));
 });
 
 test("Gemini falls back after a model-scoped 429 and logs the successful Flash-Lite model", async () => {
@@ -917,6 +932,179 @@ test("Gemini falls back after a model-scoped 429 and logs the successful Flash-L
   assert.ok(logs.includes("[GEMINI] análise concluída com modelo=gemini-flash-latest"));
 });
 
+test("Gemini Generate Content sends inline image data and extracts candidate text", async () => {
+  const requests = [];
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-generate-content-key",
+    fetchImpl: async (url, options) => {
+      requests.push({ url: url.toString(), options, body: JSON.parse(options.body) });
+      if (url.toString().endsWith("/interactions")) {
+        return geminiResponse(429, { error: { message: "Global quota exceeded" } });
+      }
+      return geminiResponse(200, {
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: " Há uma placa. " },
+                { inlineData: { mimeType: "image/jpeg", data: "ignored" } },
+                { text: "Está escrito Saída." }
+              ]
+            }
+          }
+        ]
+      });
+    }
+  });
+
+  assert.equal(
+    await provider.describeImage({ buffer: JPEG_IMAGE, mimeType: "image/jpeg" }),
+    "Há uma placa.\nEstá escrito Saída."
+  );
+  assert.equal(requests.length, 2);
+  assert.equal(
+    requests[1].url,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+  );
+  assert.equal(requests[1].options.method, "POST");
+  assert.equal(requests[1].options.headers["x-goog-api-key"], "test-generate-content-key");
+  assert.ok(requests[1].options.signal);
+  assert.equal(requests[1].body.contents[0].role, "user");
+  assert.match(requests[1].body.contents[0].parts[0].text, /português brasileiro/);
+  assert.deepEqual(requests[1].body.contents[0].parts[1].inline_data, {
+    mime_type: "image/jpeg",
+    data: JPEG_IMAGE.toString("base64")
+  });
+});
+
+test("Gemini Generate Content tries the next model after HTTP 503", async () => {
+  const requestedModels = [];
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async (url) => {
+      const requestUrl = url.toString();
+      if (requestUrl.endsWith("/interactions")) {
+        return geminiResponse(429, { error: { message: "Global quota exceeded" } });
+      }
+      const model = requestUrl.match(/models\/([^:]+):generateContent/)[1];
+      requestedModels.push(model);
+      return requestedModels.length === 1
+        ? geminiResponse(503, { error: { message: "Unavailable" } })
+        : geminiResponse(200, {
+            candidates: [{ content: { parts: [{ text: "Resposta GC." }] } }]
+          });
+    }
+  });
+
+  assert.equal(
+    await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+    "Resposta GC."
+  );
+  assert.deepEqual(requestedModels, ["gemini-2.5-flash-lite", "gemini-3.5-flash-lite"]);
+});
+
+test("Gemini Generate Content tries the next model after a timeout", async () => {
+  const requestedModels = [];
+  const timeoutValues = [];
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = (milliseconds) => {
+    timeoutValues.push(milliseconds);
+    return AbortSignal.abort(Object.assign(new Error("Timed out"), { name: "TimeoutError" }));
+  };
+
+  try {
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async (url, options) => {
+        const requestUrl = url.toString();
+        if (requestUrl.endsWith("/interactions")) {
+          return geminiResponse(429, { error: { message: "Global quota exceeded" } });
+        }
+        requestedModels.push(requestUrl.match(/models\/([^:]+):generateContent/)[1]);
+        if (requestedModels.length === 1) {
+          throw options.signal.reason;
+        }
+        return geminiResponse(200, {
+          candidates: [{ content: { parts: [{ text: "Resposta GC depois do timeout." }] } }]
+        });
+      }
+    });
+
+    assert.equal(
+      await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+      "Resposta GC depois do timeout."
+    );
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
+
+  assert.deepEqual(requestedModels, ["gemini-2.5-flash-lite", "gemini-3.5-flash-lite"]);
+  assert.deepEqual(timeoutValues, [20_000, 10_000, 10_000]);
+});
+
+test("Gemini Generate Content stops on global HTTP 429", async () => {
+  const requestedModels = [];
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async (url) => {
+      const requestUrl = url.toString();
+      if (requestUrl.endsWith("/interactions")) {
+        return geminiResponse(429, { error: { message: "Global quota exceeded" } });
+      }
+      requestedModels.push(requestUrl.match(/models\/([^:]+):generateContent/)[1]);
+      return geminiResponse(429, { error: { message: "Quota exceeded" } });
+    }
+  });
+
+  await assert.rejects(
+    () => provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+    (error) => error.upstreamStatus === 429
+  );
+  assert.deepEqual(requestedModels, ["gemini-2.5-flash-lite"]);
+});
+
+test("Gemini Generate Content fallback preserves analyze and ask-image response contracts", async (t) => {
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async (url, options) => {
+      if (url.toString().endsWith("/interactions")) {
+        return geminiResponse(429, { error: { message: "Global quota exceeded" } });
+      }
+      const body = JSON.parse(options.body);
+      const prompt = body.contents[0].parts[0].text;
+      const text = prompt.includes("Pergunta do usuário:")
+        ? "A resposta da pergunta."
+        : "A descrição da imagem.";
+      return geminiResponse(200, { candidates: [{ content: { parts: [{ text }] } }] });
+    }
+  });
+  const baseUrl = await startTestServer(t, new AiAnalysisService(provider));
+
+  const analyzeResponse = await fetch(`${baseUrl}/api/ai/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "image/png" },
+    body: PNG_IMAGE
+  });
+  assert.equal(analyzeResponse.status, 200);
+  assert.deepEqual(await analyzeResponse.json(), {
+    success: true,
+    description: "A descrição da imagem."
+  });
+
+  const askUrl = new URL("/api/ai/ask-image", baseUrl);
+  askUrl.searchParams.set("question", "O que aparece?");
+  const askResponse = await fetch(askUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: PNG_IMAGE
+  });
+  assert.equal(askResponse.status, 200);
+  assert.deepEqual(await askResponse.json(), {
+    success: true,
+    answer: "A resposta da pergunta."
+  });
+});
+
 test("Gemini does not switch models for permanent HTTP errors", async (t) => {
   const models = [
     "gemini-3.8-flash",
@@ -928,7 +1116,7 @@ test("Gemini does not switch models for permanent HTTP errors", async (t) => {
     "gemini-flash-lite-latest",
     "gemini-flash-latest"
   ];
-  for (const status of [400, 401, 403, 404, 429]) {
+  for (const status of [400, 401, 403, 404]) {
     for (let failingIndex = 0; failingIndex < models.length; failingIndex += 1) {
       await t.test(`HTTP ${status} from ${models[failingIndex]}`, async () => {
         const requestedModels = [];
@@ -995,9 +1183,9 @@ test("Gemini timeout logs elapsed milliseconds without exposing request data", a
   const originalConsoleError = console.error;
   const originalConsoleWarn = console.warn;
   const logs = [];
-  let timeoutMs;
+  const timeoutMs = [];
   AbortSignal.timeout = (milliseconds) => {
-    timeoutMs = milliseconds;
+    timeoutMs.push(milliseconds);
     return AbortSignal.abort(
       Object.assign(new Error("The operation was aborted due to timeout"), {
         name: "TimeoutError"
@@ -1025,7 +1213,9 @@ test("Gemini timeout logs elapsed milliseconds without exposing request data", a
     console.warn = originalConsoleWarn;
   }
 
-  assert.equal(timeoutMs, 20_000);
+  assert.equal(timeoutMs[0], 20_000);
+  assert.ok(timeoutMs.length > 1);
+  assert.ok(timeoutMs.includes(10_000));
   assert.match(logs[0], /^\[GEMINI ERROR\] timeout after \d+ ms model=gemini-3\.8-flash$/);
   assert.ok(logs.includes("[GEMINI] modelo=gemini-3.8-flash timeout"));
   assert.doesNotMatch(logs.join("\n"), /secret-test-api-key/);
