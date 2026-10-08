@@ -243,7 +243,7 @@ test("POST /api/ai/analyze returns a controlled message when Gemini quota is exc
   });
 });
 
-test("Gemini HTTP errors are logged with status and sanitized response body", async (t) => {
+test("Gemini HTTP errors do not log the response body", async (t) => {
   const apiKey = "secret-test-api-key";
   let requestCount = 0;
   const provider = new GeminiVisionProvider({
@@ -257,7 +257,7 @@ test("Gemini HTTP errors are logged with status and sanitized response body", as
           return JSON.stringify({
             error: {
               message: `Invalid key ${apiKey}`,
-              echoedImage: PNG_IMAGE.toString("base64")
+              description: "Resposta potencialmente pessoal."
             }
           });
         }
@@ -292,11 +292,10 @@ test("Gemini HTTP errors are logged with status and sanitized response body", as
   assert.ok(logMessages.includes("[GEMINI] response status=403"));
   assert.ok(logMessages.includes("[GEMINI ERROR] status=403"));
   assert.equal(requestCount, 1);
-  assert.ok(logMessages.some((message) => message.includes("[GEMINI ERROR] body=")));
   assert.ok(logMessages.some((message) => message.startsWith("[AI SERVICE ERROR]")));
   const loggedDiagnostics = logMessages.join("\n");
-  assert.match(loggedDiagnostics, /Invalid key \[API_KEY_REDACTED\]/);
-  assert.match(loggedDiagnostics, /\[IMAGE_DATA_REDACTED\]/);
+  assert.doesNotMatch(loggedDiagnostics, /Resposta potencialmente pessoal/);
+  assert.doesNotMatch(loggedDiagnostics, /Invalid key/);
   assert.doesNotMatch(loggedDiagnostics, new RegExp(apiKey));
   assert.doesNotMatch(loggedDiagnostics, new RegExp(PNG_IMAGE.toString("base64")));
 });
@@ -329,6 +328,104 @@ test("Gemini logs response status after receiving a successful response", async 
   assert.equal(logs[0], "[GEMINI] request starting model=gemini-3.8-flash");
   assert.match(logs[1], /^\[GEMINI\] request finished in \d+ ms status=200$/);
   assert.equal(logs[2], "[GEMINI] response status=200");
+});
+
+test("Gemini extracts unique text from all Interactions response steps", async () => {
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async () => geminiResponse(200, {
+      status: "completed",
+      steps: [
+        {
+          type: "model_output",
+          content: [
+            { type: "text", text: "  Há uma mesa junto à janela.  " },
+            { type: "image", text: "não deve ser incluído" },
+            { type: "text", text: "Uma cadeira está ao lado da mesa." }
+          ]
+        },
+        {
+          type: "model_output",
+          content: [
+            { type: "text", text: "Há uma mesa junto à janela." },
+            { type: "text", text: "A parede é branca." }
+          ]
+        }
+      ]
+    })
+  });
+
+  const description = await provider.describeImage({
+    buffer: PNG_IMAGE,
+    mimeType: "image/png"
+  });
+
+  assert.equal(
+    description,
+    "Há uma mesa junto à janela.\nUma cadeira está ao lado da mesa.\nA parede é branca."
+  );
+});
+
+test("Gemini supports the existing output_text and outputs response formats", async () => {
+  const responses = [
+    {
+      output_text: "Descrição do formato legado."
+    },
+    {
+      outputs: [
+        {
+          content: [
+            { type: "text", text: "Primeiro trecho." },
+            { type: "image", text: "ignorado" }
+          ]
+        },
+        {
+          content: [
+            { type: "text", text: "Segundo trecho." }
+          ]
+        }
+      ]
+    }
+  ];
+
+  for (const expected of [
+    "Descrição do formato legado.",
+    "Primeiro trecho.\nSegundo trecho."
+  ]) {
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async () => geminiResponse(200, responses.shift())
+    });
+    assert.equal(
+      await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+      expected
+    );
+  }
+});
+
+test("Gemini errors when a successful response has no supported text output", async () => {
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async () => geminiResponse(200, {
+      status: "completed",
+      steps: [
+        {
+          type: "model_output",
+          content: [
+            { type: "image", text: "not text" },
+            { type: "text", image: "no text field" }
+          ]
+        }
+      ]
+    })
+  });
+
+  await assert.rejects(
+    () => provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+    (error) =>
+      error.message === "Gemini API não retornou uma descrição." &&
+      error.upstreamStatus === 200
+  );
 });
 
 test("Gemini uses gemini-3.8-flash directly when it succeeds", async () => {

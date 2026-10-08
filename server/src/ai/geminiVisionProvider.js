@@ -2,7 +2,6 @@ const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1bet
 const MODEL = "gemini-3.8-flash";
 const FALLBACK_MODEL = "gemini-3.7-flash";
 const SECOND_FALLBACK_MODEL = "gemini-3.6-flash";
-const MAX_ERROR_BODY_LENGTH = 4_000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const DESCRIPTION_PROMPT =
   "Descreva esta imagem em português brasileiro para uma pessoa cega. " +
@@ -12,11 +11,8 @@ const DESCRIPTION_PROMPT =
   "a compreender a cena. Não invente nem deduza informações que não estejam visíveis. " +
   "Quando algo importante não puder ser identificado com segurança, diga isso claramente.";
 
-function sanitizeErrorBody(body, apiKey, imageBase64) {
-  let sanitized = body
-    .replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+/gi, "[IMAGE_DATA_REDACTED]")
-    .replace(/[A-Za-z0-9+/]{128,}={0,2}/g, "[BASE64_REDACTED]");
-
+function sanitizeErrorMessage(message, apiKey, imageBase64) {
+  let sanitized = message;
   if (imageBase64) {
     sanitized = sanitized.split(imageBase64).join("[IMAGE_DATA_REDACTED]");
   }
@@ -24,12 +20,25 @@ function sanitizeErrorBody(body, apiKey, imageBase64) {
     sanitized = sanitized.split(apiKey).join("[API_KEY_REDACTED]");
   }
 
-  return sanitized.length > MAX_ERROR_BODY_LENGTH
-    ? `${sanitized.slice(0, MAX_ERROR_BODY_LENGTH)}...[TRUNCATED]`
-    : sanitized;
+  return sanitized
+    .replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+/gi, "[IMAGE_DATA_REDACTED]")
+    .replace(/[A-Za-z0-9+/]{128,}={0,2}/g, "[BASE64_REDACTED]")
+    .slice(0, 1_000);
 }
 
 function extractDescription(responseBody) {
+  const stepsText = Array.isArray(responseBody.steps)
+    ? responseBody.steps
+        .flatMap((step) => (Array.isArray(step.content) ? step.content : []))
+        .filter((item) => item?.type === "text" && typeof item.text === "string")
+        .map((item) => item.text.trim())
+        .filter(Boolean)
+    : [];
+  const uniqueStepsText = [...new Set(stepsText)];
+  if (uniqueStepsText.length > 0) {
+    return uniqueStepsText.join("\n");
+  }
+
   const interaction = responseBody.interaction || responseBody;
   if (typeof interaction.output_text === "string") {
     return interaction.output_text.trim();
@@ -41,10 +50,11 @@ function extractDescription(responseBody) {
 
   return interaction.outputs
     .flatMap((output) => (Array.isArray(output.content) ? output.content : [output]))
-    .filter((item) => item.type === "text" || typeof item.text === "string")
-    .map((item) => (typeof item.text === "string" ? item.text : ""))
-    .join("\n")
-    .trim();
+    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .map((item) => (typeof item.text === "string" ? item.text.trim() : ""))
+    .filter(Boolean)
+    .filter((text, index, texts) => texts.indexOf(text) === index)
+    .join("\n");
 }
 
 class GeminiVisionProvider {
@@ -100,7 +110,7 @@ class GeminiVisionProvider {
 
         const error = new Error("Falha de comunicação com a Gemini API.");
         error.retryableUnavailable = isTimeout;
-        error.upstreamBody = sanitizeErrorBody(
+        error.upstreamBody = sanitizeErrorMessage(
           cause instanceof Error ? cause.message : "Falha de rede desconhecida.",
           this.apiKey,
           imageBase64
@@ -113,16 +123,8 @@ class GeminiVisionProvider {
       );
       console.info(`[GEMINI] response status=${response.status}`);
       if (!response.ok) {
-        let responseBody;
-        try {
-          responseBody = await response.text();
-        } catch {
-          responseBody = "Não foi possível ler o corpo de erro da Gemini.";
-        }
-
         const error = new Error(`Gemini API respondeu HTTP ${response.status}.`);
         error.upstreamStatus = response.status;
-        error.upstreamBody = sanitizeErrorBody(responseBody, this.apiKey, imageBase64);
         throw error;
       }
 
@@ -142,7 +144,6 @@ class GeminiVisionProvider {
       } catch {
         const error = new Error("Gemini API retornou uma resposta JSON inválida.");
         error.upstreamStatus = response.status;
-        error.upstreamBody = sanitizeErrorBody(responseText, this.apiKey, imageBase64);
         throw error;
       }
 
@@ -150,7 +151,6 @@ class GeminiVisionProvider {
       if (!description) {
         const error = new Error("Gemini API não retornou uma descrição.");
         error.upstreamStatus = response.status;
-        error.upstreamBody = sanitizeErrorBody(responseText, this.apiKey, imageBase64);
         throw error;
       }
 
