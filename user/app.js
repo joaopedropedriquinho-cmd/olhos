@@ -1,537 +1,565 @@
-const socket = io({ auth: { role: "user" } });
-const nameInput = document.querySelector("#user-name");
-const helpButton = document.querySelector("#help-button");
-const listenButton = document.querySelector("#listen-button");
-const welcomeButton = document.querySelector("#welcome-button");
-const visionButton = document.querySelector("#vision-button");
-const setupButton = document.querySelector("#setup-button");
-const permissionStatus = document.querySelector("#permission-status");
-const statusPanel = document.querySelector("#request-status");
-const statusMessage = document.querySelector("#status-message");
-const requestDetails = document.querySelector("#request-details");
-const cancelButton = document.querySelector("#cancel-button");
-const consentActions = document.querySelector("#consent-actions");
-const consentYesButton = document.querySelector("#consent-yes");
-const consentNoButton = document.querySelector("#consent-no");
-const connectionStatus = document.querySelector("#connection-status");
-const voiceStatus = document.querySelector("#voice-status");
-const cameraPreview = document.querySelector("#camera-preview");
+(() => {
+  const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+  const AI_URL = "/api/ai/ask-image";
+  const HELP_PHRASE = "preciso de ajuda";
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const recognition = SpeechRecognition ? new SpeechRecognition() : null;
-let activeRequestId = null;
-let listening = false;
-let visionConsentPending = false;
-let volunteerConsentPending = false;
-let connectedBefore = false;
-
-if (recognition) {
-  recognition.lang = "pt-BR";
-  recognition.continuous = false;
-  recognition.interimResults = false;
-
-  recognition.addEventListener("start", () => {
-    listening = true;
-    listenButton.setAttribute("aria-pressed", "true");
-    listenButton.textContent = "PARAR DE OUVIR";
-    setVoiceStatus("Estou ouvindo. Pode falar agora.");
-  });
-
-  recognition.addEventListener("result", (event) => {
-    const transcript = event.results[event.resultIndex][0].transcript.trim();
-    setVoiceStatus(`Você disse: ${transcript}`);
-    handleVoiceCommand(transcript);
-  });
-
-  recognition.addEventListener("error", (event) => {
-    listening = false;
-    const message =
-      event.error === "not-allowed"
-        ? "O acesso ao microfone foi negado. Permita o microfone nas configurações do navegador ou use o botão Preciso de ajuda."
-        : event.error === "no-speech"
-          ? "Não ouvi uma fala. Toque em Falar agora e tente novamente."
-          : "O reconhecimento de voz não está disponível no momento. Você ainda pode usar os botões.";
-    announce(message);
-  });
-
-  recognition.addEventListener("end", () => {
-    listening = false;
-    listenButton.setAttribute("aria-pressed", "false");
-    listenButton.textContent = "🎤 FALAR AGORA";
-  });
-}
-
-socket.on("connect", () => {
-  connectionStatus.textContent = "Conectado ao serviço.";
-  if (connectedBefore) {
-    announce("A conexão com o serviço foi restabelecida.");
-  }
-  connectedBefore = true;
-});
-
-socket.on("disconnect", () => {
-  connectionStatus.textContent = "Conexão interrompida. Tentando reconectar…";
-  announce("A conexão foi interrompida. Tentando reconectar.");
-});
-
-socket.on("request_accepted", (request) => {
-  if (request.id !== activeRequestId) {
-    return;
-  }
-  activeRequestId = null;
-  cancelButton.hidden = true;
-  showStatus(
-    "🙋 Um voluntário aceitou ajudar você.",
-    `Seu pedido foi aceito por ${request.volunteerName}.`
-  );
-  helpButton.disabled = false;
-  announce(`Um voluntário aceitou ajudar você. ${request.volunteerName} aceitou seu pedido.`);
-});
-
-socket.on("request_cancelled", (request) => {
-  if (request.id !== activeRequestId) {
-    return;
-  }
-  activeRequestId = null;
-  showStatus("Pedido cancelado.", "Se precisar, você pode fazer um novo pedido.");
-  cancelButton.hidden = true;
-  helpButton.disabled = false;
-  announce("Seu pedido foi cancelado.");
-});
-
-setupButton.addEventListener("click", configurePermissions);
-listenButton.addEventListener("click", () => {
-  if (listening) {
-    recognition.stop();
-    setVoiceStatus("Escuta encerrada.");
-    speak("Escuta encerrada.");
-    return;
-  }
-
-  startListening();
-});
-welcomeButton.addEventListener("click", () => {
-  speak(
-    "Olá! Eu sou o Meus Olhos. Posso conectar você a um voluntário. " +
-      "Diga: preciso de ajuda, o que está na minha frente, leia isso para mim, ou cancelar."
-  );
-});
-helpButton.addEventListener("click", () => createHelpRequest());
-visionButton.addEventListener("click", requestVisionConsent);
-cancelButton.addEventListener("click", cancelHelpRequest);
-consentYesButton.addEventListener("click", () => handleConsent(true));
-consentNoButton.addEventListener("click", () => handleConsent(false));
-
-window.addEventListener("load", () => {
-  speak(
-    "Olá! Eu sou o Meus Olhos. Você pode falar comigo. Diga: preciso de ajuda, " +
-      "o que está na minha frente, ou leia isso para mim. A descrição de imagens " +
-      "por inteligência artificial ainda não está disponível."
-  );
-});
-
-async function configurePermissions() {
-  setupButton.disabled = true;
-  const results = [];
-
-  if ("Notification" in window && Notification.permission === "default") {
-    try {
-      const permissionPromise = Notification.requestPermission();
-      const result = await permissionPromise;
-      results.push(
-        result === "granted"
-          ? "notificações permitidas"
-          : "notificações não permitidas; são opcionais"
-      );
-    } catch {
-      results.push("não foi possível configurar notificações; são opcionais");
-    }
-  } else if ("Notification" in window && Notification.permission === "granted") {
-    results.push("notificações já permitidas");
-  } else {
-    results.push("notificações não disponíveis ou bloqueadas; são opcionais");
-  }
-
-  results.push(await requestAndReleaseMedia("microfone", { audio: true }));
-  results.push(await requestAndReleaseMedia("câmera", { video: true }));
-
-  const summary = `Configuração concluída. ${results.join(". ")}. ` +
-    "A câmera só será acessada quando você pedir ajuda com uma imagem.";
-  permissionStatus.textContent = summary;
-  setupButton.disabled = false;
-
-  if (recognition && results.some((result) => result.includes("microfone concedida"))) {
-    speak(
-      `${summary} Olá! Como posso ajudar? Toque em Falar agora e diga seu pedido.`
-    );
-  } else {
-    announce(summary);
-  }
-}
-
-async function requestAndReleaseMedia(label, constraints) {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    return `${label} não disponível neste navegador`;
-  }
-
-  const deviceName = label === "câmera" ? "A câmera" : "O microfone";
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    return `Permissão para ${label === "câmera" ? "a câmera" : "o microfone"} concedida`;
-  } catch (error) {
-    if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-      return `acesso ${label === "câmera" ? "à câmera" : "ao microfone"} negado; você ainda pode usar as outras funções`;
-    }
-    if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-      return `${deviceName} não encontrado${label === "câmera" ? "a" : ""} neste dispositivo`;
-    }
-    return `não foi possível acessar ${label === "câmera" ? "a câmera" : "o microfone"}`;
-  } finally {
-    stream?.getTracks().forEach((track) => track.stop());
-  }
-}
-
-function startListening() {
-  if (!recognition) {
-    announce(
-      "O reconhecimento de fala não é compatível com este navegador. " +
-        "Use o botão Preciso de ajuda ou abra esta página em um navegador compatível."
-    );
-    return;
-  }
-
-  if (!window.isSecureContext) {
-    announce("O microfone exige uma conexão segura ou localhost. Abra o aplicativo por HTTPS.");
-    return;
-  }
-
-  const beginRecognition = () => {
-    try {
-      recognition.start();
-    } catch (error) {
-      if (error.name === "InvalidStateError") {
-        announce("Já estou ouvindo. Pode falar agora.");
-        return;
-      }
-      announce("Não foi possível iniciar o reconhecimento de voz. Verifique a permissão do microfone.");
-    }
+  const elements = {
+    openCamera: document.getElementById("open-camera"),
+    cameraSection: document.getElementById("camera-section"),
+    cameraPreview: document.getElementById("camera-preview"),
+    capturePhoto: document.getElementById("capture-photo"),
+    filePickerButton: document.getElementById("file-picker-button"),
+    photoFile: document.getElementById("photo-file"),
+    photoSection: document.getElementById("photo-section"),
+    photoPreview: document.getElementById("photo-preview"),
+    questionForm: document.getElementById("question-form"),
+    question: document.getElementById("question"),
+    retakePhoto: document.getElementById("retake-photo"),
+    listenAgain: document.getElementById("listen-again"),
+    status: document.getElementById("status"),
+    voiceStatus: document.getElementById("voice-status"),
+    requestPanel: document.getElementById("request-panel"),
+    requestMessage: document.getElementById("request-message"),
+    cancelRequest: document.getElementById("cancel-request")
   };
 
-  if ("speechSynthesis" in window) {
-    speak("Pode falar agora.", beginRecognition);
-  } else {
-    beginRecognition();
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+  const socket = typeof window.io === "function" ? window.io() : null;
+
+  let cameraStream = null;
+  let photoBlob = null;
+  let photoUrl = null;
+  let recognition = null;
+  let requestInProgress = false;
+  let activeRequestId = null;
+  let lastQuestion = "";
+  let lastAnswer = "";
+
+  function setStatus(message) {
+    elements.status.textContent = message;
   }
-}
 
-async function handleVoiceCommand(transcript) {
-  const command = normalize(transcript);
+  function setVoiceStatus(message) {
+    elements.voiceStatus.textContent = message;
+  }
 
-  if (visionConsentPending) {
-    if (isYes(command)) {
-      await handleConsent(true);
-    } else if (isNo(command) || isCancel(command)) {
-      await handleConsent(false);
-    } else {
-      respond("Responda sim para continuar ou não para cancelar.");
+  function stopCamera() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      cameraStream = null;
     }
-    return;
+    elements.cameraPreview.srcObject = null;
+    elements.cameraPreview.hidden = true;
+    elements.capturePhoto.hidden = true;
   }
 
-  if (volunteerConsentPending) {
-    if (isYes(command)) {
-      await handleConsent(true);
-    } else if (isNo(command) || isCancel(command)) {
-      await handleConsent(false);
-    } else {
-      respond("Responda sim para chamar um voluntário ou não para continuar sem atendimento.");
+  function stopRecognition() {
+    if (!recognition) {
+      return;
     }
-    return;
-  }
 
-  if (isCancel(command)) {
-    if (activeRequestId) {
-      await cancelHelpRequest();
-    } else {
-      respond("Não há um pedido ativo para cancelar.");
+    const activeRecognition = recognition;
+    recognition = null;
+    try {
+      activeRecognition.stop();
+    } catch (error) {
+      if (error.name !== "InvalidStateError") {
+        setStatus("Não foi possível parar o microfone. Você pode continuar digitando.");
+      }
     }
-    return;
   }
 
-  if (isDecisionVisionRequest(command)) {
-    visionConsentPending = false;
-    volunteerConsentPending = false;
-    askForVolunteer(
-      "A inteligência artificial de visão não está configurada e não posso avaliar " +
-        "se uma situação é segura. Não atravesse uma rua nem enfrente um risco com base " +
-        "nesta aplicação. Posso chamar um voluntário?"
-    );
-    return;
+  function clearPhoto() {
+    photoBlob = null;
+    if (photoUrl) {
+      URL.revokeObjectURL(photoUrl);
+      photoUrl = null;
+    }
+    elements.photoPreview.removeAttribute("src");
+    elements.photoSection.hidden = true;
+    elements.listenAgain.hidden = true;
+    elements.question.value = "";
   }
 
-  if (isHelpRequest(command) || isVolunteerRequest(command)) {
-    await createHelpRequest();
-    return;
+  function speak(text, onEnd) {
+    if (!("speechSynthesis" in window) || typeof window.SpeechSynthesisUtterance !== "function") {
+      setStatus("A leitura em voz alta não está disponível. Use os controles da tela.");
+      return false;
+    }
+
+    stopRecognition();
+    window.speechSynthesis.cancel();
+
+    const utterance = new window.SpeechSynthesisUtterance(text);
+    utterance.lang = "pt-BR";
+    utterance.onend = () => {
+      if (typeof onEnd === "function") {
+        onEnd();
+      }
+    };
+    utterance.onerror = () => {
+      setStatus("Não foi possível usar a voz. Você pode digitar sua pergunta ou tentar novamente.");
+      elements.listenAgain.hidden = false;
+    };
+
+    try {
+      window.speechSynthesis.speak(utterance);
+      return true;
+    } catch (error) {
+      setStatus("A leitura em voz alta falhou. Use os controles da tela.");
+      elements.listenAgain.hidden = false;
+      return false;
+    }
   }
 
-  if (isVisionRequest(command)) {
-    requestVisionConsent();
-    return;
+  function focusTextQuestion() {
+    elements.listenAgain.hidden = !photoBlob;
+    elements.question.focus();
   }
 
-  respond("Não entendi o pedido. Diga preciso de ajuda, descreva a imagem ou cancelar.");
-}
+  function listenForQuestion() {
+    if (!SpeechRecognition) {
+      setStatus("O reconhecimento de voz não está disponível. Digite sua pergunta.");
+      focusTextQuestion();
+      return;
+    }
 
-async function captureAndDescribe() {
-  if (!navigator.mediaDevices?.getUserMedia || !window.isSecureContext) {
-    askForVolunteer(
-      "A câmera não está disponível nesta conexão. Posso chamar um voluntário?"
-    );
-    return;
+    stopRecognition();
+    const currentRecognition = new SpeechRecognition();
+    recognition = currentRecognition;
+    currentRecognition.lang = "pt-BR";
+    currentRecognition.continuous = false;
+    currentRecognition.interimResults = false;
+    currentRecognition.maxAlternatives = 1;
+
+    currentRecognition.onstart = () => {
+      elements.listenAgain.hidden = true;
+      setStatus("Estou ouvindo. Diga sua pergunta ou um comando.");
+      setVoiceStatus("Microfone ligado.");
+    };
+
+    currentRecognition.onresult = (event) => {
+      const transcript = event.results?.[0]?.[0]?.transcript?.trim();
+      if (!transcript) {
+        setStatus("Não entendi. Tente falar novamente ou digite sua pergunta.");
+        elements.listenAgain.hidden = !photoBlob;
+        return;
+      }
+
+      setVoiceStatus(`Você disse: ${transcript}`);
+      handleVoiceCommand(transcript);
+    };
+
+    currentRecognition.onerror = (event) => {
+      elements.listenAgain.hidden = !photoBlob;
+      const messages = {
+        "not-allowed": "Permita o uso do microfone nas configurações do navegador ou digite sua pergunta.",
+        "service-not-allowed": "O navegador não permitiu usar o microfone. Você pode digitar sua pergunta.",
+        "no-speech": "Não ouvi sua fala. Tente de novo ou digite sua pergunta.",
+        "network": "O reconhecimento de voz falhou por um problema de rede. Você pode digitar sua pergunta."
+      };
+      setStatus(messages[event.error] || "O microfone não funcionou. Você pode digitar sua pergunta.");
+      setVoiceStatus(messages[event.error] || "Falha no reconhecimento de voz.");
+    };
+
+    currentRecognition.onend = () => {
+      if (recognition === currentRecognition) {
+        recognition = null;
+      }
+      setVoiceStatus("");
+    };
+
+    try {
+      currentRecognition.start();
+    } catch (error) {
+      recognition = null;
+      elements.listenAgain.hidden = !photoBlob;
+      setStatus("Não foi possível iniciar o microfone. Digite sua pergunta ou tente falar novamente.");
+    }
   }
 
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-    cameraPreview.srcObject = stream;
-    await cameraPreview.play();
-    if (!cameraPreview.videoWidth || !cameraPreview.videoHeight) {
-      await new Promise((resolve, reject) => {
-        cameraPreview.addEventListener("loadedmetadata", resolve, { once: true });
-        cameraPreview.addEventListener("error", reject, { once: true });
+  function promptForQuestion() {
+    const prompt =
+      "Diga o que gostaria de saber sobre esta imagem. A foto será enviada quando sua pergunta for reconhecida.";
+    setStatus("Aguardando sua pergunta.");
+    if (!speak(prompt, listenForQuestion)) {
+      focusTextQuestion();
+    }
+  }
+
+  function normalizeCommand(text) {
+    return text
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^\w\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function handleVoiceCommand(transcript) {
+    const command = normalizeCommand(transcript);
+
+    if (command.includes(HELP_PHRASE)) {
+      createVolunteerRequest();
+      return;
+    }
+
+    if (command.includes("tirar outra foto") || command.includes("nova foto")) {
+      startCamera();
+      return;
+    }
+
+    if (command.includes("repetir resposta") && lastAnswer) {
+      readAnswer(lastAnswer);
+      return;
+    }
+
+    if (command.includes("repetir pergunta") && lastQuestion) {
+      submitQuestion(lastQuestion);
+      return;
+    }
+
+    if (!photoBlob) {
+      setStatus("Para fazer uma pergunta, tire uma foto primeiro.");
+      speak("Para fazer uma pergunta, tire uma foto primeiro.", () => {});
+      return;
+    }
+
+    submitQuestion(transcript);
+  }
+
+  function showPhoto(blob) {
+    stopCamera();
+    if (photoUrl) {
+      URL.revokeObjectURL(photoUrl);
+    }
+    photoBlob = blob;
+    photoUrl = URL.createObjectURL(blob);
+    elements.photoPreview.src = photoUrl;
+    elements.photoSection.hidden = false;
+    elements.cameraSection.hidden = true;
+    elements.listenAgain.hidden = true;
+    elements.question.value = "";
+    setStatus("Foto pronta. Vou pedir sua pergunta.");
+    promptForQuestion();
+  }
+
+  async function startCamera() {
+    stopRecognition();
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    clearPhoto();
+    elements.photoFile.value = "";
+    elements.cameraSection.hidden = false;
+    elements.filePickerButton.hidden = false;
+    elements.openCamera.textContent = "Abrir câmera novamente";
+    setStatus("Solicitando acesso à câmera.");
+
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      setStatus("A câmera direta não está disponível. Use o controle para tirar ou escolher uma foto.");
+      elements.filePickerButton.focus();
+      return;
+    }
+
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: "environment" } }
       });
+      elements.cameraPreview.srcObject = cameraStream;
+      elements.cameraPreview.hidden = false;
+      elements.capturePhoto.hidden = false;
+      elements.filePickerButton.hidden = false;
+      await elements.cameraPreview.play();
+      setStatus("Câmera pronta. Enquadre a imagem e tire a foto.");
+      elements.capturePhoto.focus();
+    } catch (error) {
+      stopCamera();
+      if (error.name === "OverconstrainedError" || error.name === "TypeError") {
+        try {
+          cameraStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: true
+          });
+          elements.cameraPreview.srcObject = cameraStream;
+          elements.cameraPreview.hidden = false;
+          elements.capturePhoto.hidden = false;
+          await elements.cameraPreview.play();
+          setStatus("Câmera pronta. Enquadre a imagem e tire a foto.");
+          elements.capturePhoto.focus();
+          return;
+        } catch (fallbackError) {
+          stopCamera();
+          setStatus("Não foi possível abrir a câmera. Use o controle para tirar ou escolher uma foto.");
+          elements.filePickerButton.focus();
+          return;
+        }
+      }
+
+      setStatus("Não foi possível abrir a câmera. Verifique a permissão ou use o controle para tirar ou escolher uma foto.");
+      elements.filePickerButton.focus();
+    }
+  }
+
+  function canvasToJpeg(canvas, quality) {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error("Não foi possível criar a foto."));
+          }
+        },
+        "image/jpeg",
+        quality
+      );
+    });
+  }
+
+  async function capturePhoto() {
+    const video = elements.cameraPreview;
+    if (!cameraStream || !video.videoWidth || !video.videoHeight) {
+      setStatus("A câmera ainda está sendo preparada. Tente novamente em instantes.");
+      return;
     }
 
     const canvas = document.createElement("canvas");
-    const scale = Math.min(1, 1280 / cameraPreview.videoWidth);
-    canvas.width = Math.round(cameraPreview.videoWidth * scale);
-    canvas.height = Math.round(cameraPreview.videoHeight * scale);
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const context = canvas.getContext("2d");
     if (!context) {
-      throw new Error("Não foi possível preparar a imagem capturada.");
-    }
-    context.drawImage(cameraPreview, 0, 0, canvas.width, canvas.height);
-    const imageDataUrl = canvas.toDataURL("image/jpeg", 0.75);
-    stream.getTracks().forEach((track) => track.stop());
-    cameraPreview.srcObject = null;
-
-    const response = await fetch("/api/assistant/vision", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imageDataUrl })
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Não foi possível processar a solicitação de imagem.");
-    }
-    askForVolunteer(result.spokenResponse);
-  } catch (error) {
-    const permissionDenied =
-      error.name === "NotAllowedError" || error.name === "PermissionDeniedError";
-    askForVolunteer(
-      permissionDenied
-        ? "O acesso à câmera foi negado. Posso chamar um voluntário para ajudar?"
-        : "Não foi possível capturar a imagem. Posso chamar um voluntário para ajudar?"
-    );
-  } finally {
-    stream?.getTracks().forEach((track) => track.stop());
-    cameraPreview.srcObject = null;
-  }
-}
-
-function requestVisionConsent() {
-  visionConsentPending = true;
-  volunteerConsentPending = false;
-  consentActions.hidden = false;
-  respond(
-    "Ainda não há inteligência artificial de visão configurada e não consigo identificar " +
-      "uma imagem com segurança. Se você autorizar, posso capturar uma foto e enviá-la " +
-      "temporariamente ao servidor para o fluxo de demonstração. Ela não será guardada. " +
-      "Deseja continuar? Diga sim ou não."
-  );
-}
-
-function askForVolunteer(message) {
-  visionConsentPending = false;
-  volunteerConsentPending = true;
-  consentActions.hidden = false;
-  respond(`${message} Diga sim para chamar ou não para cancelar.`);
-}
-
-async function handleConsent(accepted) {
-  if (visionConsentPending) {
-    visionConsentPending = false;
-    consentActions.hidden = true;
-    if (accepted) {
-      await captureAndDescribe();
-    } else {
-      respond("Tudo bem. Não vou capturar nem enviar nenhuma imagem.");
-    }
-    return;
-  }
-
-  if (volunteerConsentPending) {
-    volunteerConsentPending = false;
-    consentActions.hidden = true;
-    if (accepted) {
-      await createHelpRequest();
-    } else {
-      respond("Tudo bem. Não vou chamar um voluntário. Você pode pedir ajuda quando quiser.");
-    }
-  }
-}
-
-async function createHelpRequest() {
-  if (activeRequestId) {
-    respond("Seu pedido já está procurando um voluntário.");
-    return;
-  }
-
-  visionConsentPending = false;
-  volunteerConsentPending = false;
-  consentActions.hidden = true;
-  helpButton.disabled = true;
-  showStatus("Enviando seu pedido…", "");
-
-  try {
-    const response = await fetch("/api/requests", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userName: nameInput.value.trim() || "Pessoa usuária",
-        type: "visual_assistance",
-        socketId: socket.id
-      })
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Não foi possível enviar o pedido.");
+      setStatus("Não foi possível preparar a foto. Use a opção para escolher uma imagem.");
+      return;
     }
 
-    activeRequestId = result.request.id;
-    showStatus("Procurando um voluntário…", "Avisaremos você assim que alguém aceitar.");
-    cancelButton.hidden = false;
-    respond("Seu pedido foi enviado. Estou procurando um voluntário.");
-  } catch (error) {
-    showStatus("Não foi possível enviar o pedido.", error.message);
-    helpButton.disabled = false;
-    respond(`Não foi possível enviar o pedido. ${error.message}`);
-  }
-}
-
-async function cancelHelpRequest() {
-  if (!activeRequestId) {
-    respond("Não há um pedido ativo para cancelar.");
-    return;
-  }
-
-  cancelButton.disabled = true;
-  try {
-    const requestId = activeRequestId;
-    const response = await fetch(`/api/requests/${encodeURIComponent(activeRequestId)}/cancel`, {
-      method: "POST"
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.error || "Não foi possível cancelar o pedido.");
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    try {
+      const blob = await canvasToJpeg(canvas, 0.95);
+      if (blob.size > MAX_IMAGE_BYTES) {
+        setStatus("A foto ficou grande demais para enviar. Tente uma imagem menor.");
+        return;
+      }
+      showPhoto(blob);
+    } catch (error) {
+      setStatus("Não foi possível preparar a foto. Tente novamente ou escolha uma imagem.");
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
     }
-    if (activeRequestId === requestId) {
+  }
+
+  function handleSelectedFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setStatus("Escolha uma imagem JPEG, PNG ou WebP.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setStatus("A imagem ultrapassa o limite de 8 MiB. Escolha uma imagem menor.");
+      event.target.value = "";
+      return;
+    }
+    showPhoto(file);
+  }
+
+  async function submitQuestion(question) {
+    const cleanQuestion = question.trim();
+    if (!photoBlob || !cleanQuestion) {
+      setStatus("Diga ou digite uma pergunta sobre a foto.");
+      elements.question.focus();
+      return;
+    }
+    if (requestInProgress) {
+      return;
+    }
+
+    lastQuestion = cleanQuestion;
+    stopRecognition();
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    requestInProgress = true;
+    elements.listenAgain.hidden = true;
+    elements.question.value = cleanQuestion;
+    elements.questionForm.querySelector("button[type='submit']").disabled = true;
+    setStatus("Enviando sua pergunta e a imagem. Aguarde a resposta.");
+
+    try {
+      const endpoint = `${AI_URL}?question=${encodeURIComponent(cleanQuestion)}`;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": photoBlob.type },
+        body: photoBlob
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success !== true || typeof result.answer !== "string") {
+        throw new Error(
+          response.status === 413
+            ? "A imagem ultrapassa o limite aceito. Tire outra foto ou escolha uma imagem menor."
+            : "Não foi possível obter uma resposta agora."
+        );
+      }
+
+      lastAnswer = result.answer;
+      setStatus("Resposta recebida.");
+      readAnswer(result.answer);
+    } catch (error) {
+      const message =
+        error instanceof TypeError
+          ? "Falha de rede ao enviar a imagem. Verifique sua conexão e tente novamente."
+          : error.message || "O serviço de IA falhou. Tente novamente.";
+      setStatus(message);
+      elements.listenAgain.hidden = false;
+      speak(message, listenForQuestion);
+    } finally {
+      requestInProgress = false;
+      elements.questionForm.querySelector("button[type='submit']").disabled = false;
+    }
+  }
+
+  function readAnswer(answer) {
+    const followUp =
+      " Se quiser continuar, diga outra pergunta. Você também pode dizer repetir resposta, repetir pergunta, tirar outra foto ou preciso de ajuda.";
+    setStatus("Lendo a resposta. Depois, você poderá fazer outra pergunta por voz.");
+    if (!speak(`${answer}${followUp}`, listenForQuestion)) {
+      elements.listenAgain.hidden = false;
+    }
+  }
+
+  async function createVolunteerRequest() {
+    stopRecognition();
+    stopCamera();
+    elements.cameraSection.hidden = true;
+    if (activeRequestId) {
+      setStatus("Você já tem um pedido de ajuda aguardando resposta.");
+      speak("Você já tem um pedido de ajuda aguardando resposta.", listenForQuestion);
+      return;
+    }
+    if (!socket?.connected) {
+      const message = "Não foi possível conectar aos voluntários. Verifique a rede e tente pedir ajuda novamente.";
+      setStatus(message);
+      elements.listenAgain.hidden = !photoBlob;
+      speak(message, listenForQuestion);
+      return;
+    }
+    setStatus("Enviando seu pedido de ajuda para os voluntários.");
+    elements.requestPanel.hidden = false;
+    elements.requestMessage.textContent = "Enviando pedido. Aguarde a confirmação do sistema.";
+    elements.cancelRequest.hidden = true;
+
+    try {
+      const response = await fetch("/api/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userName: "Pessoa usuária",
+          type: "visual_assistance",
+          ...(socket?.id ? { socketId: socket.id } : {})
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.request?.id) {
+        throw new Error("Não foi possível registrar seu pedido de ajuda.");
+      }
+
+      activeRequestId = result.request.id;
+      elements.requestMessage.textContent =
+        "Seu pedido foi enviado. Ainda não há confirmação de um voluntário.";
+      elements.cancelRequest.hidden = false;
+      setStatus("Pedido registrado. Aguardando um voluntário.");
+      speak(
+        "Seu pedido foi enviado. Aguarde a confirmação de um voluntário. Você ainda pode fazer outra pergunta ou pedir uma nova foto.",
+        listenForQuestion
+      );
+    } catch (error) {
+      elements.requestMessage.textContent = error.message;
+      setStatus(error.message);
+      elements.listenAgain.hidden = !photoBlob;
+      speak(error.message, listenForQuestion);
+    }
+  }
+
+  async function cancelVolunteerRequest() {
+    if (!activeRequestId) {
+      return;
+    }
+
+    elements.cancelRequest.disabled = true;
+    try {
+      const response = await fetch(
+        `/api/requests/${encodeURIComponent(activeRequestId)}/cancel`,
+        { method: "POST" }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result.error || "Não foi possível cancelar o pedido.");
+      }
       activeRequestId = null;
-      showStatus("Pedido cancelado.", "Se precisar, você pode fazer um novo pedido.");
-      cancelButton.hidden = true;
-      helpButton.disabled = false;
-      respond("Seu pedido foi cancelado.");
+      elements.requestMessage.textContent = "Pedido cancelado.";
+      elements.cancelRequest.hidden = true;
+      setStatus("Pedido cancelado.");
+      speak("Seu pedido foi cancelado.", () => {});
+    } catch (error) {
+      setStatus(error.message);
+      elements.requestMessage.textContent = error.message;
+    } finally {
+      elements.cancelRequest.disabled = false;
     }
-  } catch (error) {
-    requestDetails.textContent = error.message;
-    respond(error.message);
-  } finally {
-    cancelButton.disabled = false;
   }
-}
 
-function isHelpRequest(command) {
-  return /\b(preciso de ajuda|quero ajuda|me ajude|ajude me|chame ajuda)\b/.test(command);
-}
+  elements.openCamera.addEventListener("click", startCamera);
+  elements.capturePhoto.addEventListener("click", capturePhoto);
+  elements.filePickerButton.addEventListener("click", () => elements.photoFile.click());
+  elements.photoFile.addEventListener("change", handleSelectedFile);
+  elements.retakePhoto.addEventListener("click", startCamera);
+  elements.listenAgain.addEventListener("click", listenForQuestion);
+  elements.questionForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitQuestion(elements.question.value);
+  });
+  elements.cancelRequest.addEventListener("click", cancelVolunteerRequest);
 
-function isVolunteerRequest(command) {
-  return /\b(quero falar com um voluntario|falar com voluntario|chame um voluntario|chamar um voluntario)\b/.test(command);
-}
+  if (socket) {
+    socket.on("request_accepted", (request) => {
+      if (request.id !== activeRequestId) {
+        return;
+      }
+      activeRequestId = null;
+      const volunteer = request.volunteerName || "Um voluntário";
+      elements.requestMessage.textContent = `${volunteer} aceitou seu pedido.`;
+      elements.cancelRequest.hidden = true;
+      setStatus(`${volunteer} aceitou seu pedido de ajuda.`);
+      speak(`${volunteer} aceitou seu pedido de ajuda.`, listenForQuestion);
+    });
 
-function isVisionRequest(command) {
-  return /\b(na minha frente|(?:quero saber )?o que (tem|esta) (aqui|na minha frente)|descreva|descreve|o que estou vendo|o que eu estou vendo|leia isso|ler isso|leia para mim|ler para mim|leia o texto|analise a imagem|analisa a imagem)\b/.test(command);
-}
+    socket.on("request_cancelled", (request) => {
+      if (request.id !== activeRequestId) {
+        return;
+      }
+      activeRequestId = null;
+      elements.requestMessage.textContent = "O pedido foi cancelado.";
+      elements.cancelRequest.hidden = true;
+      setStatus("O pedido foi cancelado.");
+      speak("O pedido foi cancelado.", listenForQuestion);
+    });
+  }
 
-function isDecisionVisionRequest(command) {
-  return /\b(quero saber se preciso de ajuda|nao tenho certeza se consigo atravessar|posso atravessar|devo atravessar|isso e seguro|e seguro atravessar)\b/.test(command);
-}
-
-function isCancel(command) {
-  return /\b(cancelar|cancele|cancela|desistir|desisto)\b/.test(command);
-}
-
-function isYes(command) {
-  return /^(sim|sim por favor|pode|pode sim|quero|claro|isso)$/.test(command);
-}
-
-function isNo(command) {
-  return /^(nao|nao obrigado|nao obrigada|agora nao|cancela|deixa)$/.test(command);
-}
-
-function normalize(text) {
-  return text
-    .toLocaleLowerCase("pt-BR")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function showStatus(message, details) {
-  statusPanel.hidden = false;
-  statusMessage.textContent = message;
-  requestDetails.textContent = details;
-}
-
-function setVoiceStatus(message) {
-  voiceStatus.textContent = message;
-}
-
-function respond(message) {
-  setVoiceStatus(message);
-  showStatus(message, "");
-  speak(message, () => {
-    if (visionConsentPending || volunteerConsentPending) {
-      startListening();
+  window.addEventListener("pagehide", () => {
+    stopRecognition();
+    stopCamera();
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (photoUrl) {
+      URL.revokeObjectURL(photoUrl);
     }
   });
-}
-
-function announce(message) {
-  setVoiceStatus(message);
-  speak(message);
-}
-
-function speak(message, onEnd) {
-  if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
-    if (onEnd) {
-      setVoiceStatus(`${message} A fala automática não está disponível neste navegador.`);
-      onEnd();
-    }
-    return;
-  }
-
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(message);
-  utterance.lang = "pt-BR";
-  utterance.rate = 0.95;
-  utterance.onend = () => onEnd?.();
-  utterance.onerror = () => {
-    if (onEnd) {
-      setVoiceStatus(`${message} A fala automática não está disponível neste navegador.`);
-    }
-  };
-  window.speechSynthesis.speak(utterance);
-}
+})();

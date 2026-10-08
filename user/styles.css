@@ -1,10 +1,12 @@
 :root {
   color-scheme: light;
   font-family: Arial, Helvetica, sans-serif;
-  color: #10252d;
-  background: #eef4f5;
+  color: #142f38;
+  background: #f4f8f8;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -15,205 +17,186 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  padding: 20px;
   display: grid;
   place-items: center;
+  padding: 24px;
 }
 
-.card {
-  width: min(100%, 720px);
-  padding: clamp(24px, 6vw, 48px);
-  border: 2px solid #c5d4d8;
-  border-radius: 20px;
+button,
+textarea {
+  font: inherit;
+}
+
+.app {
+  width: min(100%, 620px);
+  padding: clamp(24px, 6vw, 56px);
+  border: 1px solid #d2e0e2;
+  border-radius: 24px;
   background: #fff;
-  box-shadow: 0 16px 44px rgb(18 60 74 / 9%);
+  box-shadow: 0 16px 48px rgb(20 47 56 / 8%);
 }
 
 .brand {
-  display: inline-block;
-  color: #123c4a;
-  font-size: 1.2rem;
-  font-weight: 900;
-  letter-spacing: 0.12em;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: #102f3a;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
   text-decoration: none;
 }
 
-h1 {
-  margin: 26px 0 10px;
-  font-size: clamp(2rem, 7vw, 3.25rem);
-  line-height: 1.08;
-}
-
-h2 {
-  margin: 0 0 12px;
+.brand-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #075d70;
   font-size: 1.25rem;
+  letter-spacing: 0;
 }
 
-p {
+h1 {
+  margin: 32px 0 12px;
+  color: #102f3a;
+  font-size: clamp(2rem, 7vw, 3rem);
+  line-height: 1.12;
+}
+
+.intro,
+.photo-hint,
+.status,
+.request-panel p {
   font-size: 1.125rem;
   line-height: 1.6;
 }
 
 .intro {
-  margin: 0 0 24px;
-  color: #304850;
-}
-
-.voice-guide,
-.permission-panel,
-.status-panel {
-  margin-top: 20px;
-  padding: clamp(18px, 4vw, 24px);
-  border-radius: 14px;
-}
-
-.voice-guide {
-  border: 2px solid #b8cbd1;
-  background: #f3f8f9;
-}
-
-.voice-guide p,
-.permission-panel p {
-  margin: 0;
-}
-
-.voice-guide .examples {
-  margin-top: 12px;
-  color: #304850;
-}
-
-.permission-panel {
-  border: 2px solid #d0dadd;
-  background: #fff;
-}
-
-.permission-panel > p {
-  margin: 0 0 16px;
-  color: #304850;
-}
-
-.permission-status,
-.connection-status {
-  color: #304850;
-  font-size: 1rem;
-}
-
-.permission-status {
-  margin: 14px 0 0 !important;
-}
-
-.actions {
-  display: grid;
-  gap: 14px;
-  margin-top: 24px;
-}
-
-.name-form {
-  margin-top: 22px;
-}
-
-label {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 1.05rem;
-  font-weight: 800;
-}
-
-input {
-  width: 100%;
-  min-height: 58px;
-  padding: 14px;
-  border: 2px solid #697f87;
-  border-radius: 10px;
-  color: #10252d;
-  font: inherit;
-  font-size: 1.125rem;
-}
-
-input:focus-visible,
-button:focus-visible,
-a:focus-visible {
-  outline: 4px solid #a75b00;
-  outline-offset: 4px;
+  margin: 0 0 28px;
+  color: #324c54;
 }
 
 .button {
-  width: 100%;
-  min-height: 68px;
-  padding: 16px 20px;
+  min-height: 56px;
+  padding: 14px 22px;
   border: 2px solid transparent;
   border-radius: 12px;
   cursor: pointer;
-  font: inherit;
-  font-size: 1.2rem;
-  font-weight: 900;
+  font-size: 1.125rem;
+  font-weight: 700;
   line-height: 1.25;
+  text-align: center;
+  touch-action: manipulation;
 }
 
-.button:disabled {
-  cursor: wait;
-  opacity: 0.72;
+.button:focus-visible,
+.brand:focus-visible,
+textarea:focus-visible {
+  outline: 4px solid #efb400;
+  outline-offset: 4px;
 }
 
 .button-primary {
-  background: #123c4a;
+  width: 100%;
   color: #fff;
+  background: #075d70;
 }
 
-.button-primary:hover:not(:disabled) {
-  background: #092e3a;
-}
-
-.button-help {
-  min-height: 78px;
-  background: #8b1e1e;
-  color: #fff;
-}
-
-.button-help:hover:not(:disabled) {
-  background: #6c1515;
+.button-primary:hover {
+  background: #064b5b;
 }
 
 .button-secondary {
-  border-color: #123c4a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: #075d70;
+  color: #064b5b;
   background: #fff;
-  color: #123c4a;
 }
 
-.button-cancel {
-  margin-top: 16px;
-  border-color: #7b2020;
-  background: #fff;
-  color: #6d1717;
+.button-secondary:hover {
+  background: #eaf4f5;
 }
 
-.consent-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.flow-section {
+  margin-top: 28px;
+}
+
+.media-preview {
+  display: block;
+  width: 100%;
+  max-height: min(58vh, 620px);
+  border-radius: 14px;
+  background: #102f3a;
+  object-fit: contain;
+}
+
+.photo-hint {
+  margin: 16px 0;
+  color: #324c54;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 16px;
 }
 
-.status-panel {
-  border: 2px solid #aabec4;
-  background: #f0f6f7;
+.controls .button {
+  flex: 1 1 200px;
 }
 
-.status-message {
+.question-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.question-form label {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+textarea {
+  width: 100%;
+  min-height: 76px;
+  padding: 12px;
+  border: 2px solid #607980;
+  border-radius: 10px;
+  color: #142f38;
+  background: #fff;
+  font-size: 1.125rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.status {
+  min-height: 1.6em;
+  margin: 24px 0 0;
+  color: #324c54;
+}
+
+.request-panel {
+  padding: 16px;
+  border-left: 5px solid #075d70;
+  border-radius: 8px;
+  background: #edf5f6;
+}
+
+.request-panel p {
   margin: 0;
-  font-size: 1.35rem;
-  line-height: 1.4;
 }
 
-.details {
-  margin: 10px 0 0;
+.request-panel .button {
+  margin-top: 12px;
 }
 
-.connection-status {
-  margin: 20px 0 0;
-}
-
-.sr-only {
+.visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -225,6 +208,31 @@ a:focus-visible {
 
 [hidden] {
   display: none !important;
+}
+
+@media (max-width: 480px) {
+  body {
+    padding: 12px;
+    place-items: start center;
+  }
+
+  .app {
+    margin-top: 12px;
+    padding: 24px 20px;
+    border-radius: 18px;
+  }
+
+  h1 {
+    margin-top: 26px;
+  }
+
+  .controls {
+    flex-direction: column;
+  }
+
+  .controls .button {
+    width: 100%;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

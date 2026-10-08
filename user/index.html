@@ -3,85 +3,99 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#123c4a">
-    <meta name="description" content="Peça ajuda por voz ou conecte-se com uma pessoa voluntária.">
-    <title>Meus Olhos | Assistência por voz</title>
+    <meta name="theme-color" content="#102f3a">
+    <meta
+      name="description"
+      content="Use a câmera e a voz para perguntar sobre uma imagem com o Meus Olhos."
+    >
+    <title>Meus Olhos | Assistência visual</title>
     <link rel="stylesheet" href="/user/styles.css">
   </head>
   <body>
-    <main class="card" aria-labelledby="page-title">
-      <a class="brand" href="/user/" aria-label="Meus Olhos, início">MEUS OLHOS</a>
-      <h1 id="page-title">Como posso ajudar?</h1>
+    <main class="app" aria-labelledby="page-title">
+      <a class="brand" href="/user/" aria-label="Meus Olhos, página inicial">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <span>MEUS OLHOS</span>
+      </a>
+
+      <h1 id="page-title">Assistência visual, por voz</h1>
       <p class="intro">
-        Você pode falar comigo. Sua localização nunca é solicitada automaticamente.
+        Tire uma foto e pergunte o que gostaria de saber. A imagem é processada
+        temporariamente e não fica armazenada.
       </p>
 
-      <section class="voice-guide" aria-labelledby="guide-title">
-        <h2 id="guide-title">Experiência por voz</h2>
-        <p id="welcome-message">
-          Olá! Eu sou o Meus Olhos. Posso conectar você a um voluntário. A descrição
-          de imagens por inteligência artificial ainda não está disponível.
-        </p>
-        <p class="examples">
-          Diga “Preciso de ajuda”, “O que está na minha frente?”, “Leia isso para mim”
-          ou “Cancelar”.
-        </p>
-      </section>
+      <button id="open-camera" class="button button-primary" type="button">
+        Abrir câmera
+      </button>
 
-      <section class="permission-panel" aria-labelledby="permission-title">
-        <h2 id="permission-title">Privacidade e permissões</h2>
-        <p>
-          Ao iniciar, o navegador pode pedir acesso ao microfone e à câmera. A câmera
-          só é usada quando você pede ajuda para entender uma imagem. Notificações são
-          opcionais. Imagens não são guardadas. O reconhecimento de fala depende do
-          navegador e pode processar sua voz conforme as configurações dele.
-        </p>
-        <button id="setup-button" class="button button-secondary" type="button">
-          Configurar microfone, câmera e notificações
-        </button>
-        <p id="permission-status" class="permission-status" role="status" aria-live="polite">
-          Nenhuma permissão foi solicitada.
-        </p>
-      </section>
-
-      <div class="actions" aria-label="Ações principais">
-        <button id="listen-button" class="button button-primary" type="button" aria-pressed="false">
-          🎤 FALAR AGORA
-        </button>
-        <button id="welcome-button" class="button button-secondary" type="button">
-          Ouvir instruções
-        </button>
-        <button id="vision-button" class="button button-secondary" type="button">
-          Descrever uma imagem
-        </button>
-        <button id="help-button" class="button button-help" type="button">
-          <span aria-hidden="true">🆘</span> PRECISO DE AJUDA
-        </button>
-      </div>
-
-      <div class="name-form">
-        <label for="user-name">Seu nome (opcional)</label>
-        <input id="user-name" name="userName" autocomplete="name" maxlength="100">
-      </div>
-
-      <section id="request-status" class="status-panel" aria-live="polite" aria-atomic="true" hidden>
-        <h2 id="status-message" class="status-message"></h2>
-        <p id="request-details" class="details"></p>
-        <div id="consent-actions" class="consent-actions" hidden>
-          <button id="consent-yes" class="button button-primary" type="button" aria-describedby="status-message">Sim</button>
-          <button id="consent-no" class="button button-cancel" type="button" aria-describedby="status-message">Não</button>
+      <section id="camera-section" class="flow-section" aria-label="Câmera" hidden>
+        <video
+          id="camera-preview"
+          class="media-preview"
+          playsinline
+          muted
+          aria-label="Prévia da câmera"
+          hidden
+        ></video>
+        <div class="controls">
+          <button id="capture-photo" class="button button-primary" type="button" hidden>
+            Tirar foto
+          </button>
+          <button id="file-picker-button" class="button button-secondary" type="button" hidden>
+            Tirar ou escolher uma foto
+          </button>
+          <input
+            id="photo-file"
+            class="visually-hidden"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            capture="environment"
+            aria-label="Tirar ou escolher uma foto JPEG, PNG ou WebP"
+          >
         </div>
-        <button id="cancel-button" class="button button-cancel" type="button" hidden>
+      </section>
+
+      <section id="photo-section" class="flow-section" aria-label="Foto e pergunta" hidden>
+        <img id="photo-preview" class="media-preview" alt="Prévia da foto escolhida">
+        <p class="photo-hint">
+          Diga sua pergunta quando ouvir o aviso. A foto será enviada ao serviço para respondê-la.
+        </p>
+        <form id="question-form" class="question-form">
+          <label for="question">Ou digite sua pergunta</label>
+          <textarea
+            id="question"
+            name="question"
+            rows="2"
+            maxlength="1000"
+            autocomplete="off"
+          ></textarea>
+          <div class="controls">
+            <button id="send-question" class="button button-primary" type="submit">
+              Enviar pergunta
+            </button>
+            <button id="retake-photo" class="button button-secondary" type="button">
+              Tirar outra foto
+            </button>
+            <button id="listen-again" class="button button-secondary" type="button" hidden>
+              Tentar falar
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section id="request-panel" class="flow-section request-panel" aria-live="polite" hidden>
+        <p id="request-message"></p>
+        <button id="cancel-request" class="button button-secondary" type="button" hidden>
           Cancelar pedido
         </button>
       </section>
 
-      <p id="connection-status" class="connection-status" role="status" aria-live="polite">
-        Conectando ao serviço…
+      <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">
+        Pronto para começar.
       </p>
-      <p id="voice-status" class="sr-only" role="status" aria-live="assertive" aria-atomic="true"></p>
-      <video id="camera-preview" class="sr-only" playsinline aria-hidden="true"></video>
+      <p id="voice-status" class="visually-hidden" role="status" aria-live="assertive" aria-atomic="true"></p>
     </main>
+
     <script src="/socket.io/socket.io.js"></script>
     <script src="/user/app.js" defer></script>
   </body>
