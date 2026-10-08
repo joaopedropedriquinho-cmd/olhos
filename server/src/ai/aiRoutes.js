@@ -24,8 +24,12 @@ function createAiRouter(aiAnalysisService) {
         const description = await aiAnalysisService.analyzeImage(image);
         return res.json({ success: true, description });
       } catch (error) {
+        if (Number.isInteger(error.upstreamStatus)) {
+          console.error(`[GEMINI ERROR] status=${error.upstreamStatus}`);
+          console.error(`[GEMINI ERROR] body=${error.upstreamBody || ""}`);
+        }
+
         if (error.upstreamStatus === 429) {
-          console.error("Gemini API limitou a análise por cota ou frequência.");
           return res.status(503).json(QUOTA_FAILURE_RESPONSE);
         }
 

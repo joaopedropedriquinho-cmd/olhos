@@ -94,7 +94,13 @@ test("POST /api/ai/analyze returns the standard error when no provider key is co
 test("POST /api/ai/analyze returns a controlled message when Gemini quota is exceeded", async (t) => {
   const provider = new GeminiVisionProvider({
     apiKey: "test-key",
-    fetchImpl: async () => ({ ok: false, status: 429 })
+    fetchImpl: async () => ({
+      ok: false,
+      status: 429,
+      async text() {
+        return '{"error":{"message":"Quota exceeded"}}';
+      }
+    })
   });
   const service = new AiAnalysisService(provider);
   const baseUrl = await startTestServer(t, service);
@@ -109,6 +115,53 @@ test("POST /api/ai/analyze returns a controlled message when Gemini quota is exc
     success: false,
     message: "A IA está temporariamente indisponível. Tente novamente mais tarde."
   });
+});
+
+test("Gemini HTTP errors are logged with status and sanitized response body", async (t) => {
+  const apiKey = "secret-test-api-key";
+  const provider = new GeminiVisionProvider({
+    apiKey,
+    fetchImpl: async () => ({
+      ok: false,
+      status: 403,
+      async text() {
+        return JSON.stringify({
+          error: {
+            message: `Invalid key ${apiKey}`,
+            echoedImage: PNG_IMAGE.toString("base64")
+          }
+        });
+      }
+    })
+  });
+  const baseUrl = await startTestServer(t, new AiAnalysisService(provider));
+  const originalConsoleError = console.error;
+  const logMessages = [];
+  console.error = (...args) => logMessages.push(args.join(" "));
+
+  try {
+    const response = await fetch(`${baseUrl}/api/ai/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      body: PNG_IMAGE
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      success: false,
+      message: "Não foi possível analisar a imagem."
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.ok(logMessages.includes("[GEMINI ERROR] status=403"));
+  assert.ok(logMessages.some((message) => message.includes("[GEMINI ERROR] body=")));
+  const loggedDiagnostics = logMessages.join("\n");
+  assert.match(loggedDiagnostics, /Invalid key \[API_KEY_REDACTED\]/);
+  assert.match(loggedDiagnostics, /\[IMAGE_DATA_REDACTED\]/);
+  assert.doesNotMatch(loggedDiagnostics, new RegExp(apiKey));
+  assert.doesNotMatch(loggedDiagnostics, new RegExp(PNG_IMAGE.toString("base64")));
 });
 
 test("image validation enforces the 5 MiB limit", () => {
