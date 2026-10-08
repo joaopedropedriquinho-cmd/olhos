@@ -13,11 +13,16 @@ const GeminiVisionProvider = require("../src/ai/geminiVisionProvider");
 const PNG_IMAGE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00
 ]);
+const JPEG_IMAGE = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
+const WEBP_IMAGE = Buffer.from("RIFF0000WEBP", "ascii");
 
 function geminiResponse(status, payload) {
   return {
     ok: status >= 200 && status < 300,
     status,
+    async json() {
+      return typeof payload === "string" ? JSON.parse(payload) : payload;
+    },
     async text() {
       return typeof payload === "string" ? payload : JSON.stringify(payload);
     }
@@ -237,6 +242,133 @@ test("POST /api/ai/analyze extracts a raw App Inventor PostFile image with a for
   assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
 });
 
+test("POST /api/ai/ask-image accepts JPEG, PNG, and WebP images from App Inventor", async (t) => {
+  const cases = [
+    { mimeType: "image/jpeg", image: JPEG_IMAGE },
+    { mimeType: "image/png", image: PNG_IMAGE },
+    { mimeType: "image/webp", image: WEBP_IMAGE }
+  ];
+
+  for (const { mimeType, image } of cases) {
+    await t.test(mimeType, async (subtest) => {
+      let received;
+      const service = new AiAnalysisService({
+        async answerQuestion(receivedImage, question) {
+          received = { image: receivedImage, question };
+          return "Resposta sobre a foto.";
+        }
+      });
+      const baseUrl = await startTestServer(subtest, service);
+      const question = "Me diga o que está escrito";
+      const url = new URL("/api/ai/ask-image", baseUrl);
+      url.searchParams.set("question", question);
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: image
+      });
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), {
+        success: true,
+        answer: "Resposta sobre a foto."
+      });
+      assert.equal(received.image.mimeType, mimeType);
+      assert.deepEqual(received.image.buffer, image);
+      assert.equal(received.question, question);
+    });
+  }
+});
+
+test("POST /api/ai/ask-image rejects missing or invalid questions and invalid images", async (t) => {
+  const service = new AiAnalysisService({
+    async answerQuestion() {
+      return "Não deveria ser chamado.";
+    }
+  });
+  const baseUrl = await startTestServer(t, service);
+
+  const missingQuestion = await fetch(`${baseUrl}/api/ai/ask-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: PNG_IMAGE
+  });
+  assert.equal(missingQuestion.status, 400);
+
+  const invalidImageUrl = new URL("/api/ai/ask-image", baseUrl);
+  invalidImageUrl.searchParams.set("question", "O que aparece?");
+  const invalidImage = await fetch(invalidImageUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: Buffer.from("not an image")
+  });
+  assert.equal(invalidImage.status, 400);
+  assert.deepEqual(await invalidImage.json(), {
+    success: false,
+    message: "Não foi possível analisar a imagem."
+  });
+});
+
+test("POST /api/ai/ask-image rejects images larger than 5 MiB", async (t) => {
+  const service = new AiAnalysisService({
+    async answerQuestion() {
+      throw new Error("Oversized image should not reach Gemini.");
+    }
+  });
+  const baseUrl = await startTestServer(t, service);
+  const url = new URL("/api/ai/ask-image", baseUrl);
+  url.searchParams.set("question", "O que aparece?");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: Buffer.alloc(MAX_IMAGE_BYTES + 1)
+  });
+
+  assert.equal(response.status, 413);
+  assert.deepEqual(await response.json(), {
+    success: false,
+    message: "Não foi possível analisar a imagem."
+  });
+});
+
+test("POST /api/ai/ask-image hides Gemini error details and does not log private content", async (t) => {
+  const internalResponse = "private Gemini response with personal information";
+  const service = new AiAnalysisService({
+    async answerQuestion() {
+      const error = new Error(internalResponse);
+      error.upstreamStatus = 400;
+      throw error;
+    }
+  });
+  const baseUrl = await startTestServer(t, service);
+  const originalConsoleInfo = console.info;
+  const originalConsoleError = console.error;
+  const logs = [];
+  console.info = (...args) => logs.push(args.join(" "));
+  console.error = (...args) => logs.push(args.join(" "));
+  const url = new URL("/api/ai/ask-image", baseUrl);
+  url.searchParams.set("question", "Pergunta privada");
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: PNG_IMAGE
+    });
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      success: false,
+      message: "Não foi possível analisar a imagem."
+    });
+  } finally {
+    console.info = originalConsoleInfo;
+    console.error = originalConsoleError;
+  }
+
+  assert.doesNotMatch(logs.join("\n"), /private Gemini response|Pergunta privada/);
+  assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
+});
+
 test("POST /api/ai/analyze returns the standard error when no provider key is configured", async (t) => {
   const service = new AiAnalysisService(new GeminiVisionProvider({ apiKey: "" }));
   const baseUrl = await startTestServer(t, service);
@@ -364,6 +496,7 @@ test("Gemini logs response status after receiving a successful response", async 
   assert.equal(logs[0], "[GEMINI] tentando modelo=gemini-3.8-flash");
   assert.match(logs[1], /^\[GEMINI\] request finished in \d+ ms status=200$/);
   assert.equal(logs[2], "[GEMINI] modelo=gemini-3.8-flash status=200");
+  assert.equal(logs[3], "[GEMINI] análise concluída com modelo=gemini-3.8-flash");
 });
 
 test("Gemini extracts unique text from all Interactions response steps", async () => {
@@ -563,7 +696,7 @@ test("Gemini retries primary-model timeout with gemini-3.7-flash", async () => {
     });
     assert.equal(description, "Descrição pelo fallback.");
     assert.deepEqual(requestedModels, ["gemini-3.8-flash", "gemini-3.7-flash"]);
-    assert.deepEqual(timeoutValues, [10_000, 10_000]);
+    assert.deepEqual(timeoutValues, [8_000, 8_000]);
   } finally {
     AbortSignal.timeout = originalTimeout;
   }
@@ -610,7 +743,7 @@ test("Gemini advances from two temporarily unavailable models to gemini-3.6-flas
   assert.ok(logs.includes("[GEMINI] modelo=gemini-3.7-flash indisponível, tentando próximo"));
 });
 
-test("Gemini returns the last error after three temporary failures", async () => {
+test("Gemini stops after four temporary failures", async () => {
   const requestedModels = [];
   const originalConsoleWarn = console.warn;
   const logs = [];
@@ -631,12 +764,14 @@ test("Gemini returns the last error after three temporary failures", async () =>
   } finally {
     console.warn = originalConsoleWarn;
   }
+
   assert.deepEqual(requestedModels, [
     "gemini-3.8-flash",
     "gemini-3.7-flash",
-    "gemini-3.6-flash"
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite"
   ]);
-  assert.equal(requestedModels.length, 3);
+  assert.equal(requestedModels.length, 4);
   assert.ok(logs.includes("[GEMINI] nenhum modelo disponível"));
 });
 
@@ -647,6 +782,7 @@ test("Gemini stops after the first 429 and logs the rate limit without trying fa
   const logs = [];
   console.info = (...args) => logs.push(args.join(" "));
   console.warn = (...args) => logs.push(args.join(" "));
+
   try {
     const provider = new GeminiVisionProvider({
       apiKey: "test-key",
@@ -655,6 +791,7 @@ test("Gemini stops after the first 429 and logs the rate limit without trying fa
         return geminiResponse(429, { error: { message: "Quota exceeded" } });
       }
     });
+
     await assert.rejects(
       () => provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
       (error) => error.upstreamStatus === 429
@@ -663,14 +800,75 @@ test("Gemini stops after the first 429 and logs the rate limit without trying fa
     console.info = originalConsoleInfo;
     console.warn = originalConsoleWarn;
   }
+
   assert.deepEqual(requestedModels, ["gemini-3.8-flash"]);
   assert.ok(logs.includes("[GEMINI] modelo=gemini-3.8-flash status=429"));
-  assert.ok(logs.includes("[GEMINI] quota/rate limit detectado"));
+  assert.ok(logs.includes("[GEMINI] quota/rate limit detectado no modelo=gemini-3.8-flash"));
   assert.ok(logs.includes("[GEMINI] nenhum modelo disponível"));
 });
 
+test("Gemini falls back after a model-scoped 429 and logs the successful Flash-Lite model", async () => {
+  const requestedModels = [];
+  const originalConsoleInfo = console.info;
+  const originalConsoleWarn = console.warn;
+  const logs = [];
+  console.info = (...args) => logs.push(args.join(" "));
+  console.warn = (...args) => logs.push(args.join(" "));
+
+  try {
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async (_url, options) => {
+        const model = JSON.parse(options.body).model;
+        requestedModels.push(model);
+        if (model === "gemini-3.6-flash") {
+          return geminiResponse(429, {
+            error: {
+              details: [
+                {
+                  "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                  violations: [
+                    { subject: "project:123;model:gemini-3.6-flash" }
+                  ]
+                }
+              ]
+            }
+          });
+        }
+        if (model !== "gemini-3.5-flash-lite") {
+          return geminiResponse(503, { error: { message: "Model unavailable" } });
+        }
+        return geminiResponse(200, { output_text: "Descrição pelo Flash-Lite." });
+      }
+    });
+
+    assert.equal(
+      await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+      "Descrição pelo Flash-Lite."
+    );
+  } finally {
+    console.info = originalConsoleInfo;
+    console.warn = originalConsoleWarn;
+  }
+
+  assert.deepEqual(requestedModels, [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite"
+  ]);
+  assert.ok(logs.includes("[GEMINI] quota/rate limit detectado no modelo=gemini-3.6-flash"));
+  assert.ok(logs.includes("[GEMINI] modelo=gemini-3.6-flash indisponível, tentando próximo"));
+  assert.ok(logs.includes("[GEMINI] análise concluída com modelo=gemini-3.5-flash-lite"));
+});
+
 test("Gemini does not switch models for permanent HTTP errors", async (t) => {
-  const models = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"];
+  const models = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite"
+  ];
   for (const status of [400, 401, 403, 404, 429]) {
     for (let failingIndex = 0; failingIndex < models.length; failingIndex += 1) {
       await t.test(`HTTP ${status} from ${models[failingIndex]}`, async () => {
@@ -697,7 +895,7 @@ test("Gemini does not switch models for permanent HTTP errors", async (t) => {
   }
 });
 
-test("Gemini request uses a 10-second timeout and logs elapsed time", async () => {
+test("Gemini request uses an 8-second timeout and logs elapsed time", async () => {
   const originalTimeout = AbortSignal.timeout;
   const originalConsoleInfo = console.info;
   const logs = [];
@@ -726,7 +924,7 @@ test("Gemini request uses a 10-second timeout and logs elapsed time", async () =
     console.info = originalConsoleInfo;
   }
 
-  assert.equal(timeoutMs, 10_000);
+  assert.equal(timeoutMs, 8_000);
   assert.match(
     logs[1],
     /^\[GEMINI\] request finished in \d+ ms status=200$/
@@ -765,7 +963,7 @@ test("Gemini timeout logs elapsed milliseconds without exposing request data", a
     console.error = originalConsoleError;
   }
 
-  assert.equal(timeoutMs, 10_000);
+  assert.equal(timeoutMs, 8_000);
   assert.match(logs[0], /^\[GEMINI ERROR\] timeout after \d+ ms model=gemini-3\.8-flash$/);
   assert.doesNotMatch(logs.join("\n"), /secret-test-api-key/);
   assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
@@ -812,6 +1010,29 @@ test("Gemini provider sends the image and accessibility prompt to the configured
   assert.match(requestBody.input[0].text, /português brasileiro/);
   assert.match(requestBody.input[0].text, /cores relevantes/);
   assert.match(requestBody.input[0].text, /Não invente/);
+});
+
+test("Gemini provider includes the user's question with the image", async () => {
+  let requestOptions;
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestOptions = options;
+      return geminiResponse(200, { output_text: "Está escrito 'Saída'." });
+    }
+  });
+  const question = "Me diga o que está escrito";
+
+  assert.equal(
+    await provider.answerQuestion({ buffer: PNG_IMAGE, mimeType: "image/png" }, question),
+    "Está escrito 'Saída'."
+  );
+  const body = JSON.parse(requestOptions.body);
+  assert.equal(body.input[1].data, PNG_IMAGE.toString("base64"));
+  assert.equal(body.input[1].mime_type, "image/png");
+  assert.match(body.input[0].text, /responda especificamente à pergunta/);
+  assert.match(body.input[0].text, new RegExp(question));
+  assert.match(body.input[0].text, /não invente/i);
 });
 
 test("Gemini provider fails explicitly when AI_API_KEY is missing", async () => {
