@@ -3,10 +3,14 @@ const MODELS = [
   "gemini-3.8-flash",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
-  "gemini-3.5-flash-lite"
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-flash-latest"
 ];
-const MAX_MODEL_ATTEMPTS = 4;
-const REQUEST_TIMEOUT_MS = 8_000;
+const MAX_MODEL_ATTEMPTS = 8;
+const REQUEST_TIMEOUT_MS = 20_000;
 const DESCRIPTION_PROMPT =
   "Descreva esta imagem em português brasileiro para uma pessoa cega. " +
   "Seja objetivo, conciso e use frases naturais, adequadas para leitura em voz alta. " +
@@ -62,7 +66,12 @@ async function isModelScopedRateLimit(response, model) {
     return false;
   }
 
-  const quotaFailures = body?.error?.details?.filter(
+  const details = body?.error?.details;
+  if (!Array.isArray(details)) {
+    return false;
+  }
+
+  const quotaFailures = details.filter(
     (detail) => detail?.["@type"] === "type.googleapis.com/google.rpc.QuotaFailure"
   );
   if (!Array.isArray(quotaFailures) || quotaFailures.length === 0) {
@@ -160,6 +169,7 @@ class GeminiVisionProvider {
 
         const error = new Error("Falha de comunicação com a Gemini API.");
         error.retryableUnavailable = isTimeout;
+        error.isTimeout = isTimeout;
         error.upstreamBody = "Falha de comunicação com a Gemini API.";
         throw error;
       }
@@ -210,9 +220,6 @@ class GeminiVisionProvider {
       return description;
     };
 
-    const isRetryableUnavailable = (error) =>
-      error.upstreamStatus === 503 || error.retryableUnavailable === true;
-
     const models = MODELS.slice(0, MAX_MODEL_ATTEMPTS);
     for (let index = 0; index < models.length; index += 1) {
       try {
@@ -221,10 +228,16 @@ class GeminiVisionProvider {
         if (error.upstreamStatus === 429) {
           console.warn(`[GEMINI] quota/rate limit detectado no modelo=${models[index]}`);
           if (!error.modelScopedRateLimit) {
-            console.warn("[GEMINI] nenhum modelo disponível");
+            console.warn("[GEMINI] quota global detectada, encerrando");
             throw error;
           }
-        } else if (!isRetryableUnavailable(error)) {
+          console.warn("[GEMINI] quota específica do modelo, tentando próximo");
+        } else if (error.isTimeout) {
+          console.warn(`[GEMINI] modelo=${models[index]} timeout`);
+        } else if (
+          ![500, 502, 503, 504].includes(error.upstreamStatus) &&
+          !error.retryableUnavailable
+        ) {
           throw error;
         }
 
@@ -233,7 +246,13 @@ class GeminiVisionProvider {
           throw error;
         }
 
-        console.warn(`[GEMINI] modelo=${models[index]} indisponível, tentando próximo`);
+        if (error.upstreamStatus) {
+          console.warn(
+            `[GEMINI] modelo=${models[index]} status=${error.upstreamStatus}, tentando próximo`
+          );
+        } else {
+          console.warn(`[GEMINI] modelo=${models[index]} indisponível, tentando próximo`);
+        }
       }
     }
 

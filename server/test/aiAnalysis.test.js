@@ -665,7 +665,49 @@ test("Gemini retries primary-model 503 with gemini-3.7-flash", async () => {
     options.signal
   ));
   assert.ok(logs.includes("[GEMINI] modelo=gemini-3.8-flash status=503"));
-  assert.ok(logs.includes("[GEMINI] modelo=gemini-3.8-flash indisponível, tentando próximo"));
+  assert.ok(
+    logs.includes("[GEMINI] modelo=gemini-3.8-flash status=503, tentando próximo")
+  );
+});
+
+test("Gemini retries HTTP 500, 502, and 504 with the next model", async (t) => {
+  for (const status of [500, 502, 504]) {
+    await t.test(`HTTP ${status}`, async () => {
+      const requestedModels = [];
+      const originalConsoleInfo = console.info;
+      const originalConsoleWarn = console.warn;
+      const logs = [];
+      console.info = (...args) => logs.push(args.join(" "));
+      console.warn = (...args) => logs.push(args.join(" "));
+
+      try {
+        const provider = new GeminiVisionProvider({
+          apiKey: "test-key",
+          fetchImpl: async (_url, options) => {
+            requestedModels.push(JSON.parse(options.body).model);
+            return requestedModels.length === 1
+              ? geminiResponse(status, { error: { message: "Temporary failure" } })
+              : geminiResponse(200, { output_text: "Descrição pelo fallback." });
+          }
+        });
+
+        assert.equal(
+          await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+          "Descrição pelo fallback."
+        );
+      } finally {
+        console.info = originalConsoleInfo;
+        console.warn = originalConsoleWarn;
+      }
+
+      assert.deepEqual(requestedModels, ["gemini-3.8-flash", "gemini-3.7-flash"]);
+      assert.ok(logs.includes(`[GEMINI] modelo=gemini-3.8-flash status=${status}`));
+      assert.ok(
+        logs.includes(`[GEMINI] modelo=gemini-3.8-flash status=${status}, tentando próximo`)
+      );
+      assert.ok(logs.includes("[GEMINI] análise concluída com modelo=gemini-3.7-flash"));
+    });
+  }
 });
 
 test("Gemini retries primary-model timeout with gemini-3.7-flash", async () => {
@@ -696,7 +738,7 @@ test("Gemini retries primary-model timeout with gemini-3.7-flash", async () => {
     });
     assert.equal(description, "Descrição pelo fallback.");
     assert.deepEqual(requestedModels, ["gemini-3.8-flash", "gemini-3.7-flash"]);
-    assert.deepEqual(timeoutValues, [8_000, 8_000]);
+    assert.deepEqual(timeoutValues, [20_000, 20_000]);
   } finally {
     AbortSignal.timeout = originalTimeout;
   }
@@ -739,11 +781,15 @@ test("Gemini advances from two temporarily unavailable models to gemini-3.6-flas
     "gemini-3.7-flash",
     "gemini-3.6-flash"
   ]);
-  assert.ok(logs.includes("[GEMINI] modelo=gemini-3.8-flash indisponível, tentando próximo"));
-  assert.ok(logs.includes("[GEMINI] modelo=gemini-3.7-flash indisponível, tentando próximo"));
+  assert.ok(
+    logs.includes("[GEMINI] modelo=gemini-3.8-flash status=503, tentando próximo")
+  );
+  assert.ok(
+    logs.includes("[GEMINI] modelo=gemini-3.7-flash status=503, tentando próximo")
+  );
 });
 
-test("Gemini stops after four temporary failures", async () => {
+test("Gemini stops after eight temporary failures", async () => {
   const requestedModels = [];
   const originalConsoleWarn = console.warn;
   const logs = [];
@@ -769,9 +815,13 @@ test("Gemini stops after four temporary failures", async () => {
     "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-3.5-flash-lite"
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest"
   ]);
-  assert.equal(requestedModels.length, 4);
+  assert.equal(requestedModels.length, 8);
   assert.ok(logs.includes("[GEMINI] nenhum modelo disponível"));
 });
 
@@ -804,7 +854,7 @@ test("Gemini stops after the first 429 and logs the rate limit without trying fa
   assert.deepEqual(requestedModels, ["gemini-3.8-flash"]);
   assert.ok(logs.includes("[GEMINI] modelo=gemini-3.8-flash status=429"));
   assert.ok(logs.includes("[GEMINI] quota/rate limit detectado no modelo=gemini-3.8-flash"));
-  assert.ok(logs.includes("[GEMINI] nenhum modelo disponível"));
+  assert.ok(logs.includes("[GEMINI] quota global detectada, encerrando"));
 });
 
 test("Gemini falls back after a model-scoped 429 and logs the successful Flash-Lite model", async () => {
@@ -835,16 +885,16 @@ test("Gemini falls back after a model-scoped 429 and logs the successful Flash-L
             }
           });
         }
-        if (model !== "gemini-3.5-flash-lite") {
+        if (model !== "gemini-flash-latest") {
           return geminiResponse(503, { error: { message: "Model unavailable" } });
         }
-        return geminiResponse(200, { output_text: "Descrição pelo Flash-Lite." });
+        return geminiResponse(200, { output_text: "Descrição pelo Flash." });
       }
     });
 
     assert.equal(
       await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
-      "Descrição pelo Flash-Lite."
+      "Descrição pelo Flash."
     );
   } finally {
     console.info = originalConsoleInfo;
@@ -855,11 +905,16 @@ test("Gemini falls back after a model-scoped 429 and logs the successful Flash-L
     "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-3.5-flash-lite"
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest"
   ]);
   assert.ok(logs.includes("[GEMINI] quota/rate limit detectado no modelo=gemini-3.6-flash"));
-  assert.ok(logs.includes("[GEMINI] modelo=gemini-3.6-flash indisponível, tentando próximo"));
-  assert.ok(logs.includes("[GEMINI] análise concluída com modelo=gemini-3.5-flash-lite"));
+  assert.ok(logs.includes("[GEMINI] quota específica do modelo, tentando próximo"));
+  assert.ok(logs.includes("[GEMINI] modelo=gemini-3.6-flash status=429, tentando próximo"));
+  assert.ok(logs.includes("[GEMINI] análise concluída com modelo=gemini-flash-latest"));
 });
 
 test("Gemini does not switch models for permanent HTTP errors", async (t) => {
@@ -867,7 +922,11 @@ test("Gemini does not switch models for permanent HTTP errors", async (t) => {
     "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-3.5-flash-lite"
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest"
   ];
   for (const status of [400, 401, 403, 404, 429]) {
     for (let failingIndex = 0; failingIndex < models.length; failingIndex += 1) {
@@ -895,7 +954,7 @@ test("Gemini does not switch models for permanent HTTP errors", async (t) => {
   }
 });
 
-test("Gemini request uses an 8-second timeout and logs elapsed time", async () => {
+test("Gemini request uses a 20-second timeout and logs elapsed time", async () => {
   const originalTimeout = AbortSignal.timeout;
   const originalConsoleInfo = console.info;
   const logs = [];
@@ -924,7 +983,7 @@ test("Gemini request uses an 8-second timeout and logs elapsed time", async () =
     console.info = originalConsoleInfo;
   }
 
-  assert.equal(timeoutMs, 8_000);
+  assert.equal(timeoutMs, 20_000);
   assert.match(
     logs[1],
     /^\[GEMINI\] request finished in \d+ ms status=200$/
@@ -934,6 +993,7 @@ test("Gemini request uses an 8-second timeout and logs elapsed time", async () =
 test("Gemini timeout logs elapsed milliseconds without exposing request data", async () => {
   const originalTimeout = AbortSignal.timeout;
   const originalConsoleError = console.error;
+  const originalConsoleWarn = console.warn;
   const logs = [];
   let timeoutMs;
   AbortSignal.timeout = (milliseconds) => {
@@ -945,6 +1005,7 @@ test("Gemini timeout logs elapsed milliseconds without exposing request data", a
     );
   };
   console.error = (...args) => logs.push(args.join(" "));
+  console.warn = (...args) => logs.push(args.join(" "));
 
   try {
     const provider = new GeminiVisionProvider({
@@ -961,10 +1022,12 @@ test("Gemini timeout logs elapsed milliseconds without exposing request data", a
   } finally {
     AbortSignal.timeout = originalTimeout;
     console.error = originalConsoleError;
+    console.warn = originalConsoleWarn;
   }
 
-  assert.equal(timeoutMs, 8_000);
+  assert.equal(timeoutMs, 20_000);
   assert.match(logs[0], /^\[GEMINI ERROR\] timeout after \d+ ms model=gemini-3\.8-flash$/);
+  assert.ok(logs.includes("[GEMINI] modelo=gemini-3.8-flash timeout"));
   assert.doesNotMatch(logs.join("\n"), /secret-test-api-key/);
   assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
 });
