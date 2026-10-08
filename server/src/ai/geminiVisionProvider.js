@@ -1,33 +1,21 @@
 const sharp = require("sharp");
 
-const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const GEMINI_GENERATE_CONTENT_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
 const MODELS = [
-  "gemini-3.8-flash",
-  "gemini-3.7-flash",
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+  "gemini-3.5-flash",
   "gemini-3.6-flash",
-  "gemini-3.5-flash-lite",
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-flash-lite",
-  "gemini-flash-lite-latest",
-  "gemini-flash-latest"
+  "gemini-3.7-flash",
+  "gemini-3.8-flash"
 ];
-const MAX_MODEL_ATTEMPTS = 8;
-const REQUEST_TIMEOUT_MS = 20_000;
 const GEMINI_IMAGE_TARGET_BYTES = 700 * 1024;
 const JPEG_QUALITIES = [88, 80, 72, 64, 56, 48, 40, 32];
 const MAX_IMAGE_DIMENSIONS = [
   1920, 1792, 1664, 1536, 1408, 1280, 1152, 1024, 896, 768, 640, 512
 ];
-const GENERATE_CONTENT_MODELS = [
-  "gemini-2.5-flash-lite",
-  "gemini-3.5-flash-lite",
-  "gemini-3.7-flash",
-  "gemini-3.8-flash"
-];
-const GENERATE_CONTENT_MAX_ATTEMPTS = GENERATE_CONTENT_MODELS.length;
-const GENERATE_CONTENT_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 10_000;
 const DESCRIPTION_PROMPT =
   "Descreva esta imagem em português brasileiro para uma pessoa cega. " +
   "Seja objetivo, conciso e use frases naturais, adequadas para leitura em voz alta. " +
@@ -73,56 +61,6 @@ function extractDescription(responseBody) {
     .filter(Boolean)
     .filter((text, index, texts) => texts.indexOf(text) === index)
     .join("\n");
-}
-
-async function isModelScopedRateLimit(response, model) {
-  let body;
-  try {
-    body = await response.json();
-  } catch {
-    return false;
-  }
-
-  const details = body?.error?.details;
-  if (!Array.isArray(details)) {
-    return false;
-  }
-
-  const quotaFailures = details.filter(
-    (detail) => detail?.["@type"] === "type.googleapis.com/google.rpc.QuotaFailure"
-  );
-  if (!Array.isArray(quotaFailures) || quotaFailures.length === 0) {
-    return false;
-  }
-  if (
-    quotaFailures.some(
-      (failure) => !Array.isArray(failure.violations) || failure.violations.length === 0
-    )
-  ) {
-    return false;
-  }
-
-  const modelSubjects = new Set([
-    `model:${model}`,
-    `model:models/${model}`,
-    `model=${model}`,
-    `model=models/${model}`
-  ]);
-  const violations = quotaFailures.flatMap((failure) =>
-    Array.isArray(failure.violations) ? failure.violations : []
-  );
-
-  return (
-    violations.length > 0 &&
-    violations.every(
-      (violation) =>
-        typeof violation.subject === "string" &&
-        violation.subject
-          .toLowerCase()
-          .split(/[;,\s]+/)
-          .some((subject) => modelSubjects.has(subject))
-    )
-  );
 }
 
 function extractGenerateContentText(responseBody) {
@@ -217,174 +155,77 @@ class GeminiVisionProvider {
 
     const geminiImage = await prepareImageForGemini({ buffer, mimeType });
     const imageBase64 = geminiImage.buffer.toString("base64");
-    const generateContentResponse = async () => {
-      let lastError;
-      const models = GENERATE_CONTENT_MODELS.slice(0, GENERATE_CONTENT_MAX_ATTEMPTS);
-
-      for (let index = 0; index < models.length; index += 1) {
-        const model = models[index];
-        console.info(`[GEMINI GC] tentando modelo=${model}`);
-        let response;
-        try {
-          response = await this.fetchImpl(
-            `${GEMINI_GENERATE_CONTENT_URL}/${encodeURIComponent(model)}:generateContent`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "x-goog-api-key": this.apiKey
-              },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    role: "user",
-                    parts: [
-                      { text: prompt },
-                      {
-                        inline_data: {
-                          mime_type: geminiImage.mimeType,
-                          data: imageBase64
-                        }
-                      }
-                    ]
-                  }
-                ]
-              }),
-              signal: AbortSignal.timeout(GENERATE_CONTENT_TIMEOUT_MS)
-            }
-          );
-        } catch (cause) {
-          const isTimeout =
-            cause instanceof Error &&
-            (cause.name === "TimeoutError" || cause.name === "AbortError");
-          const error = new Error(
-            "Falha de comunicação com a Gemini Generate Content API."
-          );
-          error.isTimeout = isTimeout;
-          error.retryableUnavailable = true;
-          if (isTimeout) {
-            console.warn(`[GEMINI GC] timeout modelo=${model}`);
-          }
-          lastError = error;
-          if (index === models.length - 1) {
-            throw error;
-          }
-          continue;
-        }
-
-        console.info(`[GEMINI GC] resposta status=${response.status}`);
-        if (!response.ok) {
-          const error = new Error(`Gemini API respondeu HTTP ${response.status}.`);
-          error.upstreamStatus = response.status;
-
-          if (response.status === 429) {
-            console.warn(`[GEMINI GC] quota/rate limit modelo=${model}`);
-            error.modelScopedRateLimit = await isModelScopedRateLimit(response, model);
-            if (!error.modelScopedRateLimit) {
-              throw error;
-            }
-          } else if (![500, 502, 503, 504].includes(response.status)) {
-            throw error;
-          }
-
-          lastError = error;
-          if (index === models.length - 1) {
-            throw error;
-          }
-          continue;
-        }
-
-        let responseText;
-        try {
-          responseText = await response.text();
-        } catch {
-          const error = new Error(
-            "Não foi possível ler a resposta da Gemini Generate Content API."
-          );
-          error.upstreamStatus = response.status;
-          throw error;
-        }
-
-        let responseBody;
-        try {
-          responseBody = JSON.parse(responseText);
-        } catch {
-          const error = new Error(
-            "Gemini Generate Content API retornou uma resposta JSON inválida."
-          );
-          error.upstreamStatus = response.status;
-          throw error;
-        }
-
-        const answer = extractGenerateContentText(responseBody);
-        if (!answer) {
-          const error = new Error(
-            "Gemini Generate Content API não retornou uma resposta textual."
-          );
-          error.upstreamStatus = response.status;
-          throw error;
-        }
-
-        console.info(`[GEMINI GC] análise concluída com modelo=${model}`);
-        return answer;
-      }
-
-      throw lastError || new Error("Nenhum modelo Gemini Generate Content pôde analisar a imagem.");
-    };
-
-    const requestModel = async (model) => {
+    let lastError;
+    for (let index = 0; index < MODELS.length; index += 1) {
+      const model = MODELS[index];
       const requestStartedAt = Date.now();
       console.info(`[GEMINI] tentando modelo=${model}`);
+
       let response;
       try {
-        response = await this.fetchImpl(GEMINI_INTERACTIONS_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": this.apiKey
-          },
-          body: JSON.stringify({
-            model,
-            input: [
-              { type: "text", text: prompt },
-              {
-                type: "image",
-                data: imageBase64,
-                mime_type: geminiImage.mimeType
-              }
-            ]
-          }),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-        });
+        response = await this.fetchImpl(
+          `${GEMINI_GENERATE_CONTENT_URL}/${encodeURIComponent(model)}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": this.apiKey
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    { text: prompt },
+                    {
+                      inline_data: {
+                        mime_type: geminiImage.mimeType,
+                        data: imageBase64
+                      }
+                    }
+                  ]
+                }
+              ]
+            }),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+          }
+        );
       } catch (cause) {
-        const elapsedMs = Date.now() - requestStartedAt;
         const isTimeout =
           cause instanceof Error &&
           (cause.name === "TimeoutError" || cause.name === "AbortError");
-        if (isTimeout) {
-          console.error(`[GEMINI ERROR] timeout after ${elapsedMs} ms model=${model}`);
-        }
-
-        const error = new Error("Falha de comunicação com a Gemini API.");
-        error.retryableUnavailable = isTimeout;
+        const error = new Error("Falha de comunicação com a Gemini Generate Content API.");
         error.isTimeout = isTimeout;
-        error.upstreamBody = "Falha de comunicação com a Gemini API.";
-        throw error;
+        error.retryableUnavailable = true;
+        lastError = error;
+        if (isTimeout) {
+          console.warn(`[GEMINI] modelo=${model} timeout`);
+        } else {
+          console.warn(`[GEMINI] modelo=${model} falha de comunicação, tentando próximo`);
+        }
+        continue;
       }
 
       console.info(
-        `[GEMINI] request finished in ${Date.now() - requestStartedAt} ms status=${response.status}`
+        `[GEMINI] resposta em ${Date.now() - requestStartedAt} ms status=${response.status}`
       );
-      console.info(`[GEMINI] modelo=${model} status=${response.status}`);
       if (!response.ok) {
-        if (response.status === 429) {
-          const error = new Error(`Gemini API respondeu HTTP ${response.status}.`);
-          error.upstreamStatus = response.status;
-          error.modelScopedRateLimit = await isModelScopedRateLimit(response, model);
-          throw error;
-        }
         const error = new Error(`Gemini API respondeu HTTP ${response.status}.`);
         error.upstreamStatus = response.status;
+        lastError = error;
+
+        if (
+          response.status === 404 ||
+          response.status === 429 ||
+          response.status >= 500
+        ) {
+          const nextAction =
+            index < MODELS.length - 1 ? "tentando próximo" : "sem modelos restantes";
+          console.warn(`[GEMINI] modelo=${model} status=${response.status}, ${nextAction}`);
+          continue;
+        }
+
+        console.error(`[GEMINI] modelo=${model} erro não recuperável status=${response.status}`);
         throw error;
       }
 
@@ -407,67 +248,20 @@ class GeminiVisionProvider {
         throw error;
       }
 
-      const description = extractDescription(responseBody);
-      if (!description) {
+      const answer =
+        extractGenerateContentText(responseBody) || extractDescription(responseBody);
+      if (!answer) {
         const error = new Error("Gemini API não retornou uma descrição.");
         error.upstreamStatus = response.status;
         throw error;
       }
 
-      console.info(`[GEMINI] análise concluída com modelo=${model}`);
-      return description;
-    };
-
-    try {
-      const models = MODELS.slice(0, MAX_MODEL_ATTEMPTS);
-      for (let index = 0; index < models.length; index += 1) {
-        try {
-          return await requestModel(models[index]);
-        } catch (error) {
-          if (error.upstreamStatus === 429) {
-            console.warn(`[GEMINI] quota/rate limit detectado no modelo=${models[index]}`);
-            if (!error.modelScopedRateLimit) {
-              console.warn("[GEMINI] quota global detectada, tentando Generate Content");
-              throw error;
-            } else {
-              console.warn("[GEMINI] quota específica do modelo, tentando próximo");
-            }
-          } else if (error.isTimeout) {
-            console.warn(`[GEMINI] modelo=${models[index]} timeout`);
-          } else if (
-            ![500, 502, 503, 504].includes(error.upstreamStatus) &&
-            !error.retryableUnavailable
-          ) {
-            throw error;
-          }
-
-          if (index === models.length - 1) {
-            console.warn("[GEMINI] nenhum modelo disponível, tentando Generate Content");
-            throw error;
-          }
-
-          if (error.upstreamStatus) {
-            console.warn(
-              `[GEMINI] modelo=${models[index]} status=${error.upstreamStatus}, tentando próximo`
-            );
-          } else {
-            console.warn(`[GEMINI] modelo=${models[index]} indisponível, tentando próximo`);
-          }
-        }
-      }
-    } catch (error) {
-      const shouldTryGenerateContent =
-        error.upstreamStatus === 429 ||
-        [500, 502, 503, 504].includes(error.upstreamStatus) ||
-        error.retryableUnavailable === true;
-      if (!shouldTryGenerateContent) {
-        throw error;
-      }
-
-      return generateContentResponse();
+      console.info(`[GEMINI] modelo=${model} sucesso`);
+      return answer;
     }
 
-    throw new Error("Nenhum modelo Gemini pôde analisar a imagem.");
+    console.error("[GEMINI] todos os modelos disponíveis falharam");
+    throw lastError || new Error("Nenhum modelo Gemini pôde analisar a imagem.");
   }
 }
 
