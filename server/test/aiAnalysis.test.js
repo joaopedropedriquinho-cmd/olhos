@@ -163,20 +163,24 @@ test("POST /api/ai/analyze returns a controlled message when Gemini quota is exc
 
 test("Gemini HTTP errors are logged with status and sanitized response body", async (t) => {
   const apiKey = "secret-test-api-key";
+  let requestCount = 0;
   const provider = new GeminiVisionProvider({
     apiKey,
-    fetchImpl: async () => ({
-      ok: false,
-      status: 403,
-      async text() {
-        return JSON.stringify({
-          error: {
-            message: `Invalid key ${apiKey}`,
-            echoedImage: PNG_IMAGE.toString("base64")
-          }
-        });
-      }
-    })
+    fetchImpl: async () => {
+      requestCount += 1;
+      return {
+        ok: false,
+        status: 403,
+        async text() {
+          return JSON.stringify({
+            error: {
+              message: `Invalid key ${apiKey}`,
+              echoedImage: PNG_IMAGE.toString("base64")
+            }
+          });
+        }
+      };
+    }
   });
   const baseUrl = await startTestServer(t, new AiAnalysisService(provider));
   const originalConsoleError = console.error;
@@ -202,9 +206,10 @@ test("Gemini HTTP errors are logged with status and sanitized response body", as
     console.info = originalConsoleInfo;
   }
 
-  assert.ok(logMessages.includes("[GEMINI] request starting"));
+  assert.ok(logMessages.includes("[GEMINI] request starting model=gemini-3.8-flash"));
   assert.ok(logMessages.includes("[GEMINI] response status=403"));
   assert.ok(logMessages.includes("[GEMINI ERROR] status=403"));
+  assert.equal(requestCount, 1);
   assert.ok(logMessages.some((message) => message.includes("[GEMINI ERROR] body=")));
   assert.ok(logMessages.some((message) => message.startsWith("[AI SERVICE ERROR]")));
   const loggedDiagnostics = logMessages.join("\n");
@@ -239,7 +244,7 @@ test("Gemini logs response status after receiving a successful response", async 
     console.info = originalConsoleInfo;
   }
 
-  assert.equal(logs[0], "[GEMINI] request starting");
+  assert.equal(logs[0], "[GEMINI] request starting model=gemini-3.8-flash");
   assert.match(logs[1], /^\[GEMINI\] request finished in \d+ ms status=200$/);
   assert.equal(logs[2], "[GEMINI] response status=200");
 });
@@ -295,53 +300,113 @@ test("Gemini retries a primary-model 503 with the image-capable fallback model",
   );
 });
 
-test("Gemini retries the fallback only once after a second 503", async () => {
+test("Gemini retries a primary-model timeout with the fallback model", async () => {
   const requestedModels = [];
-  const provider = new GeminiVisionProvider({
-    apiKey: "test-key",
-    fetchImpl: async (_url, options) => {
-      requestedModels.push(JSON.parse(options.body).model);
-      return requestedModels.length < 3
-        ? geminiResponse(503, { error: { message: "Model unavailable" } })
-        : geminiResponse(200, { output_text: "Descrição após retry." });
-    }
-  });
+  const timeoutValues = [];
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = (milliseconds) => {
+    timeoutValues.push(milliseconds);
+    return AbortSignal.abort(Object.assign(new Error("Timed out"), { name: "TimeoutError" }));
+  };
 
-  const description = await provider.describeImage({
-    buffer: PNG_IMAGE,
-    mimeType: "image/png"
-  });
+  try {
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async (_url, options) => {
+        const model = JSON.parse(options.body).model;
+        requestedModels.push(model);
+        if (model === "gemini-3.8-flash") {
+          throw options.signal.reason;
+        }
+        return geminiResponse(200, { output_text: "Descrição pelo fallback." });
+      }
+    });
 
-  assert.equal(description, "Descrição após retry.");
-  assert.deepEqual(requestedModels, [
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash"
-  ]);
+    const description = await provider.describeImage({
+      buffer: PNG_IMAGE,
+      mimeType: "image/png"
+    });
+
+    assert.equal(description, "Descrição pelo fallback.");
+    assert.deepEqual(requestedModels, ["gemini-3.8-flash", "gemini-2.5-flash"]);
+    assert.deepEqual(timeoutValues, [30_000, 30_000]);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
 });
 
-test("Gemini stops after three total attempts when both models return 503", async () => {
+test("Gemini retries fallback after timeout and succeeds on its final attempt", async () => {
   const requestedModels = [];
-  const provider = new GeminiVisionProvider({
-    apiKey: "test-key",
-    fetchImpl: async (_url, options) => {
-      requestedModels.push(JSON.parse(options.body).model);
-      return geminiResponse(503, { error: { message: "Model unavailable" } });
-    }
-  });
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = () =>
+    AbortSignal.abort(Object.assign(new Error("Timed out"), { name: "TimeoutError" }));
 
-  await assert.rejects(
-    () => provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
-    (error) => error.upstreamStatus === 503
-  );
-  assert.deepEqual(requestedModels, [
-    "gemini-3.8-flash",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash"
-  ]);
+  try {
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async (_url, options) => {
+        const model = JSON.parse(options.body).model;
+        requestedModels.push(model);
+        if (model === "gemini-3.8-flash") {
+          return geminiResponse(503, { error: { message: "Model unavailable" } });
+        }
+        if (requestedModels.length === 2) {
+          throw options.signal.reason;
+        }
+        return geminiResponse(200, { output_text: "Descrição após retry." });
+      }
+    });
+
+    const description = await provider.describeImage({
+      buffer: PNG_IMAGE,
+      mimeType: "image/png"
+    });
+
+    assert.equal(description, "Descrição após retry.");
+    assert.deepEqual(requestedModels, [
+      "gemini-3.8-flash",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash"
+    ]);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
 });
 
-test("Gemini request uses a 120-second timeout and logs elapsed time", async () => {
+test("Gemini stops after three attempts when 503 and both fallback calls time out", async () => {
+  const requestedModels = [];
+  const originalTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = () =>
+    AbortSignal.abort(Object.assign(new Error("Timed out"), { name: "TimeoutError" }));
+
+  try {
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async (_url, options) => {
+        const model = JSON.parse(options.body).model;
+        requestedModels.push(model);
+        if (model === "gemini-3.8-flash") {
+          return geminiResponse(503, { error: { message: "Model unavailable" } });
+        }
+        throw options.signal.reason;
+      }
+    });
+
+    await assert.rejects(
+      () => provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+      /Falha de comunicação/
+    );
+    assert.deepEqual(requestedModels, [
+      "gemini-3.8-flash",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash"
+    ]);
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+  }
+});
+
+test("Gemini request uses a 30-second timeout and logs elapsed time", async () => {
   const originalTimeout = AbortSignal.timeout;
   const originalConsoleInfo = console.info;
   const logs = [];
@@ -370,7 +435,7 @@ test("Gemini request uses a 120-second timeout and logs elapsed time", async () 
     console.info = originalConsoleInfo;
   }
 
-  assert.equal(timeoutMs, 120_000);
+  assert.equal(timeoutMs, 30_000);
   assert.match(
     logs[1],
     /^\[GEMINI\] request finished in \d+ ms status=200$/
@@ -409,8 +474,8 @@ test("Gemini timeout logs elapsed milliseconds without exposing request data", a
     console.error = originalConsoleError;
   }
 
-  assert.equal(timeoutMs, 120_000);
-  assert.match(logs[0], /^\[GEMINI ERROR\] timeout after \d+ ms$/);
+  assert.equal(timeoutMs, 30_000);
+  assert.match(logs[0], /^\[GEMINI ERROR\] timeout after \d+ ms model=gemini-3\.8-flash$/);
   assert.doesNotMatch(logs.join("\n"), /secret-test-api-key/);
   assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
 });

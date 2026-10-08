@@ -3,6 +3,7 @@ const MODEL = "gemini-3.8-flash";
 const FALLBACK_MODEL = "gemini-2.5-flash";
 const MAX_ERROR_BODY_LENGTH = 4_000;
 const FALLBACK_RETRY_DELAY_MS = 500;
+const REQUEST_TIMEOUT_MS = 30_000;
 const DESCRIPTION_PROMPT =
   "Descreva esta imagem em português brasileiro para uma pessoa cega. " +
   "Seja objetivo, conciso e use frases naturais, adequadas para leitura em voz alta. " +
@@ -66,7 +67,7 @@ class GeminiVisionProvider {
     const imageBase64 = buffer.toString("base64");
     const requestModel = async (model) => {
       const requestStartedAt = Date.now();
-      console.info("[GEMINI] request starting");
+      console.info(`[GEMINI] request starting model=${model}`);
       let response;
       try {
         response = await this.fetchImpl(GEMINI_INTERACTIONS_URL, {
@@ -86,15 +87,19 @@ class GeminiVisionProvider {
               }
             ]
           }),
-          signal: AbortSignal.timeout(120_000)
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
         });
       } catch (cause) {
         const elapsedMs = Date.now() - requestStartedAt;
-        if (cause instanceof Error && cause.name === "TimeoutError") {
-          console.error(`[GEMINI ERROR] timeout after ${elapsedMs} ms`);
+        const isTimeout =
+          cause instanceof Error &&
+          (cause.name === "TimeoutError" || cause.name === "AbortError");
+        if (isTimeout) {
+          console.error(`[GEMINI ERROR] timeout after ${elapsedMs} ms model=${model}`);
         }
 
         const error = new Error("Falha de comunicação com a Gemini API.");
+        error.retryableUnavailable = isTimeout;
         error.upstreamBody = sanitizeErrorBody(
           cause instanceof Error ? cause.message : "Falha de rede desconhecida.",
           this.apiKey,
@@ -152,10 +157,13 @@ class GeminiVisionProvider {
       return description;
     };
 
+    const isRetryableUnavailable = (error) =>
+      error.upstreamStatus === 503 || error.retryableUnavailable === true;
+
     try {
       return await requestModel(MODEL);
     } catch (error) {
-      if (error.upstreamStatus !== 503) {
+      if (!isRetryableUnavailable(error)) {
         throw error;
       }
     }
@@ -164,11 +172,12 @@ class GeminiVisionProvider {
     try {
       return await requestModel(FALLBACK_MODEL);
     } catch (error) {
-      if (error.upstreamStatus !== 503) {
+      if (!isRetryableUnavailable(error)) {
         throw error;
       }
     }
 
+    console.info("[GEMINI] fallback model unavailable, retrying fallback");
     await new Promise((resolve) => setTimeout(resolve, FALLBACK_RETRY_DELAY_MS));
     return requestModel(FALLBACK_MODEL);
   }
