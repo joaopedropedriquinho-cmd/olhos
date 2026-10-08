@@ -1,8 +1,8 @@
 const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const MODEL = "gemini-3.8-flash";
-const FALLBACK_MODEL = "gemini-2.5-flash";
+const FALLBACK_MODEL = "gemini-3.7-flash";
+const SECOND_FALLBACK_MODEL = "gemini-3.6-flash";
 const MAX_ERROR_BODY_LENGTH = 4_000;
-const FALLBACK_RETRY_DELAY_MS = 500;
 const REQUEST_TIMEOUT_MS = 30_000;
 const DESCRIPTION_PROMPT =
   "Descreva esta imagem em português brasileiro para uma pessoa cega. " +
@@ -160,26 +160,24 @@ class GeminiVisionProvider {
     const isRetryableUnavailable = (error) =>
       error.upstreamStatus === 503 || error.retryableUnavailable === true;
 
-    try {
-      return await requestModel(MODEL);
-    } catch (error) {
-      if (!isRetryableUnavailable(error)) {
-        throw error;
+    const models = [MODEL, FALLBACK_MODEL, SECOND_FALLBACK_MODEL];
+    for (let index = 0; index < models.length; index += 1) {
+      if (index === 1) {
+        console.info("[GEMINI] primary model unavailable, trying fallback model");
+      } else if (index === 2) {
+        console.info("[GEMINI] fallback model unavailable, trying second fallback");
+      }
+
+      try {
+        return await requestModel(models[index]);
+      } catch (error) {
+        if (!isRetryableUnavailable(error) || index === models.length - 1) {
+          throw error;
+        }
       }
     }
 
-    console.info("[GEMINI] primary model unavailable, trying fallback model");
-    try {
-      return await requestModel(FALLBACK_MODEL);
-    } catch (error) {
-      if (!isRetryableUnavailable(error)) {
-        throw error;
-      }
-    }
-
-    console.info("[GEMINI] fallback model unavailable, retrying fallback");
-    await new Promise((resolve) => setTimeout(resolve, FALLBACK_RETRY_DELAY_MS));
-    return requestModel(FALLBACK_MODEL);
+    throw new Error("Nenhum modelo Gemini pôde analisar a imagem.");
   }
 }
 
