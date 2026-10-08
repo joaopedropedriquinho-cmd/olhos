@@ -12,12 +12,16 @@ const {
 } = require("../src/ai/aiAnalysisService");
 const GeminiVisionProvider = require("../src/ai/geminiVisionProvider");
 
-const PNG_IMAGE = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00
-]);
-const JPEG_IMAGE = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
+const PNG_IMAGE = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWPQqDihUXGCAUIBACTuBaFpkxOkAAAAAElFTkSuQmCC",
+  "base64"
+);
+const JPEG_IMAGE = Buffer.from(
+  "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAABv/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AIAB6Ev/2Q==",
+  "base64"
+);
 const WEBP_IMAGE = Buffer.from("RIFF0000WEBP", "ascii");
-const GEMINI_IMAGE_TARGET_BYTES = 1.5 * 1024 * 1024;
+const GEMINI_IMAGE_TARGET_BYTES = 700 * 1024;
 
 async function createDetailedJpeg() {
   const width = 1800;
@@ -213,7 +217,11 @@ test("successful analysis logs each stage and only request sizes", async (t) => 
 
   assert.ok(logs.includes("[AI] request received"));
   assert.ok(logs.includes("[AI] content-type=image/png"));
-  assert.ok(logs.includes("[AI] body/image size=body=9 bytes image=9 bytes"));
+  assert.ok(
+    logs.includes(
+      `[AI] body/image size=body=${PNG_IMAGE.length} bytes image=${PNG_IMAGE.length} bytes`
+    )
+  );
   assert.ok(logs.includes("[AI] calling analysis service"));
   assert.ok(logs.includes("[GEMINI] success"));
   assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
@@ -277,7 +285,9 @@ test("POST /api/ai/analyze extracts a raw App Inventor PostFile image with a for
   assert.equal(receivedImage.mimeType, "image/png");
   assert.deepEqual(receivedImage.buffer, PNG_IMAGE);
   assert.ok(logs.includes("[AI] content-type=application/x-www-form-urlencoded"));
-  assert.ok(logs.includes("[AI] image extracted size=9 bytes mime=image/png"));
+  assert.ok(
+    logs.includes(`[AI] image extracted size=${PNG_IMAGE.length} bytes mime=image/png`)
+  );
   assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
 });
 
@@ -693,10 +703,13 @@ test("Gemini retries primary-model 503 with gemini-3.7-flash", async () => {
   assert.ok(requests.every(({ url }) =>
     url === "https://generativelanguage.googleapis.com/v1beta/interactions"
   ));
-  assert.ok(requests.every(({ body }) =>
-    body.input[1].data === PNG_IMAGE.toString("base64") &&
-    body.input[1].mime_type === "image/png"
-  ));
+  for (const { body } of requests) {
+    assert.equal(body.input[1].mime_type, "image/jpeg");
+    assert.equal(
+      (await sharp(Buffer.from(body.input[1].data, "base64")).metadata()).format,
+      "jpeg"
+    );
+  }
   assert.ok(requests.every(({ options }) =>
     options.method === "POST" &&
     options.headers["Content-Type"] === "application/json" &&
@@ -1269,7 +1282,7 @@ test("image validation enforces the 8 MiB limit", () => {
   );
 });
 
-test("Gemini sends small images unchanged", async () => {
+test("Gemini sends a small valid JPEG unchanged", async () => {
   let requestBody;
   const provider = new GeminiVisionProvider({
     apiKey: "test-key",
@@ -1279,12 +1292,12 @@ test("Gemini sends small images unchanged", async () => {
     }
   });
 
-  await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" });
-  assert.equal(requestBody.input[1].mime_type, "image/png");
-  assert.equal(requestBody.input[1].data, PNG_IMAGE.toString("base64"));
+  await provider.describeImage({ buffer: JPEG_IMAGE, mimeType: "image/jpeg" });
+  assert.equal(requestBody.input[1].mime_type, "image/jpeg");
+  assert.equal(requestBody.input[1].data, JPEG_IMAGE.toString("base64"));
 });
 
-test("Gemini compresses large images to at most 1.5 MiB as a valid JPEG", async () => {
+test("Gemini compresses large images to at most 700 KiB as a valid JPEG", async () => {
   const original = await createDetailedJpeg();
   assert.ok(original.length > GEMINI_IMAGE_TARGET_BYTES);
   assert.ok(original.length <= MAX_IMAGE_BYTES);
@@ -1305,8 +1318,8 @@ test("Gemini compresses large images to at most 1.5 MiB as a valid JPEG", async 
   assert.ok(sentImage.length < original.length);
   assert.equal(requestBody.input[1].mime_type, "image/jpeg");
   assert.equal(sentMetadata.format, "jpeg");
-  assert.ok(sentMetadata.width <= 2560);
-  assert.ok(sentMetadata.height <= 2560);
+  assert.ok(sentMetadata.width <= 1920);
+  assert.ok(sentMetadata.height <= 1920);
 });
 
 test("Gemini accepts PNG and WebP input images", async () => {
@@ -1331,8 +1344,11 @@ test("Gemini accepts PNG and WebP input images", async () => {
     });
 
     await provider.describeImage({ buffer: original, mimeType: `image/${format}` });
-    assert.equal(requestBody.input[1].mime_type, `image/${format}`);
-    assert.equal(requestBody.input[1].data, original.toString("base64"));
+    const sentImage = Buffer.from(requestBody.input[1].data, "base64");
+    const sentMetadata = await sharp(sentImage).metadata();
+    assert.equal(requestBody.input[1].mime_type, "image/jpeg");
+    assert.equal(sentMetadata.format, "jpeg");
+    assert.ok(sentImage.length <= GEMINI_IMAGE_TARGET_BYTES);
   }
 });
 
@@ -1364,8 +1380,9 @@ test("Gemini provider sends the image and accessibility prompt to the configured
   assert.equal(requestOptions.headers["x-goog-api-key"], "test-key");
   const requestBody = JSON.parse(requestOptions.body);
   assert.equal(requestBody.model, "gemini-3.8-flash");
-  assert.equal(requestBody.input[1].mime_type, "image/png");
-  assert.equal(requestBody.input[1].data, PNG_IMAGE.toString("base64"));
+  const sentImage = Buffer.from(requestBody.input[1].data, "base64");
+  assert.equal(requestBody.input[1].mime_type, "image/jpeg");
+  assert.equal((await sharp(sentImage).metadata()).format, "jpeg");
   assert.match(requestBody.input[0].text, /português brasileiro/);
   assert.match(requestBody.input[0].text, /cores relevantes/);
   assert.match(requestBody.input[0].text, /Não invente/);
@@ -1387,8 +1404,9 @@ test("Gemini provider includes the user's question with the image", async () => 
     "Está escrito 'Saída'."
   );
   const body = JSON.parse(requestOptions.body);
-  assert.equal(body.input[1].data, PNG_IMAGE.toString("base64"));
-  assert.equal(body.input[1].mime_type, "image/png");
+  const sentImage = Buffer.from(body.input[1].data, "base64");
+  assert.equal(body.input[1].mime_type, "image/jpeg");
+  assert.equal((await sharp(sentImage).metadata()).format, "jpeg");
   assert.match(body.input[0].text, /responda especificamente à pergunta/);
   assert.match(body.input[0].text, new RegExp(question));
   assert.match(body.input[0].text, /não invente/i);

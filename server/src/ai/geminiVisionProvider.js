@@ -15,9 +15,11 @@ const MODELS = [
 ];
 const MAX_MODEL_ATTEMPTS = 8;
 const REQUEST_TIMEOUT_MS = 20_000;
-const GEMINI_IMAGE_TARGET_BYTES = 1.5 * 1024 * 1024;
+const GEMINI_IMAGE_TARGET_BYTES = 700 * 1024;
 const JPEG_QUALITIES = [88, 80, 72, 64, 56, 48, 40, 32];
-const MAX_IMAGE_DIMENSIONS = [2560, 2240, 1920, 1664, 1440, 1280, 1024, 768, 512];
+const MAX_IMAGE_DIMENSIONS = [
+  1920, 1792, 1664, 1536, 1408, 1280, 1152, 1024, 896, 768, 640, 512
+];
 const GENERATE_CONTENT_MODELS = [
   "gemini-2.5-flash-lite",
   "gemini-3.5-flash-lite",
@@ -139,10 +141,6 @@ function extractGenerateContentText(responseBody) {
 }
 
 async function prepareImageForGemini({ buffer, mimeType }) {
-  if (buffer.length <= GEMINI_IMAGE_TARGET_BYTES) {
-    return { buffer, mimeType };
-  }
-
   let metadata;
   try {
     metadata = await sharp(buffer, { limitInputPixels: 80_000_000 }).metadata();
@@ -161,6 +159,10 @@ async function prepareImageForGemini({ buffer, mimeType }) {
     const error = new Error("O formato real da imagem não corresponde ao tipo informado.");
     error.status = 400;
     throw error;
+  }
+
+  if (mimeType === "image/jpeg" && buffer.length <= GEMINI_IMAGE_TARGET_BYTES) {
+    return { buffer, mimeType };
   }
 
   for (const maxDimension of MAX_IMAGE_DIMENSIONS) {
