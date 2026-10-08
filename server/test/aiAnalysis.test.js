@@ -33,7 +33,7 @@ async function startTestServer(t, aiAnalysisService, routerOptions) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 
-test("GET /api/ai/diagnostics/models is protected and returns summarized image candidates", async (t) => {
+test("GET /api/ai/diagnostics/models uses the server API key and returns summarized image candidates", async (t) => {
   const apiKey = "diagnostic-test-key";
   let upstreamUrl;
   let upstreamOptions;
@@ -77,17 +77,7 @@ test("GET /api/ai/diagnostics/models is protected and returns summarized image c
     }
   });
 
-  const unauthorized = await fetch(`${baseUrl}/api/ai/diagnostics/models`);
-  assert.equal(unauthorized.status, 401);
-  assert.deepEqual(await unauthorized.json(), {
-    success: false,
-    message: "Não autorizado."
-  });
-  assert.equal(upstreamUrl, undefined);
-
-  const response = await fetch(`${baseUrl}/api/ai/diagnostics/models`, {
-    headers: { "x-goog-api-key": apiKey }
-  });
+  const response = await fetch(`${baseUrl}/api/ai/diagnostics/models`);
   assert.equal(response.status, 200);
   const result = await response.json();
   assert.deepEqual(result, {
@@ -104,6 +94,25 @@ test("GET /api/ai/diagnostics/models is protected and returns summarized image c
   assert.equal(upstreamUrl, "https://generativelanguage.googleapis.com/v1beta/models");
   assert.equal(upstreamOptions.headers["x-goog-api-key"], apiKey);
   assert.doesNotMatch(JSON.stringify(result), /diagnostic-test-key|must not be returned/);
+});
+
+test("GET /api/ai/diagnostics/models does not call Google when server API key is missing", async (t) => {
+  let upstreamCalled = false;
+  const baseUrl = await startTestServer(t, {}, {
+    getApiKey: () => "",
+    fetchImpl: async () => {
+      upstreamCalled = true;
+      throw new Error("Upstream request should not be sent.");
+    }
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/diagnostics/models`);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    success: false,
+    message: "O diagnóstico de modelos não está configurado."
+  });
+  assert.equal(upstreamCalled, false);
 });
 
 test("POST /api/ai/analyze accepts a base64 data URL and returns a description", async (t) => {

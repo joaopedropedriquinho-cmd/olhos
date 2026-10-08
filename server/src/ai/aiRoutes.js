@@ -1,5 +1,4 @@
 const express = require("express");
-const { createHash, timingSafeEqual } = require("node:crypto");
 const { MAX_IMAGE_BYTES, parseImageRequest } = require("./aiAnalysisService");
 
 const GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -12,16 +11,6 @@ const QUOTA_FAILURE_RESPONSE = {
   message: "A IA está temporariamente indisponível. Tente novamente mais tarde."
 };
 const IMAGE_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
-
-function matchesApiKey(candidate, configuredKey) {
-  if (!candidate || !configuredKey) {
-    return false;
-  }
-
-  const candidateHash = createHash("sha256").update(candidate).digest();
-  const configuredHash = createHash("sha256").update(configuredKey).digest();
-  return timingSafeEqual(candidateHash, configuredHash);
-}
 
 function summarizeModel(model) {
   const summary = {
@@ -126,12 +115,6 @@ function createAiRouter(
       return res.status(503).json({
         success: false,
         message: "O diagnóstico de modelos não está configurado."
-      });
-    }
-    if (!matchesApiKey(req.get("x-goog-api-key"), apiKey)) {
-      return res.status(401).json({
-        success: false,
-        message: "Não autorizado."
       });
     }
 
