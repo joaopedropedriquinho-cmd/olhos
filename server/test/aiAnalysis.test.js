@@ -201,6 +201,42 @@ test("POST /api/ai/analyze accepts a raw image and rejects invalid input", async
   });
 });
 
+test("POST /api/ai/analyze extracts a raw App Inventor PostFile image with a form content type", async (t) => {
+  let receivedImage;
+  const service = new AiAnalysisService({
+    async describeImage(image) {
+      receivedImage = image;
+      return "Uma imagem foi analisada.";
+    }
+  });
+  const baseUrl = await startTestServer(t, service);
+  const originalConsoleInfo = console.info;
+  const logs = [];
+  console.info = (...args) => logs.push(args.join(" "));
+
+  try {
+    const response = await fetch(`${baseUrl}/api/ai/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: PNG_IMAGE
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      success: true,
+      description: "Uma imagem foi analisada."
+    });
+  } finally {
+    console.info = originalConsoleInfo;
+  }
+
+  assert.equal(receivedImage.mimeType, "image/png");
+  assert.deepEqual(receivedImage.buffer, PNG_IMAGE);
+  assert.ok(logs.includes("[AI] content-type=application/x-www-form-urlencoded"));
+  assert.ok(logs.includes("[AI] image extracted size=9 bytes mime=image/png"));
+  assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
+});
+
 test("POST /api/ai/analyze returns the standard error when no provider key is configured", async (t) => {
   const service = new AiAnalysisService(new GeminiVisionProvider({ apiKey: "" }));
   const baseUrl = await startTestServer(t, service);

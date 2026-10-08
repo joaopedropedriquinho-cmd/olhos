@@ -24,6 +24,12 @@ function hasExpectedSignature(buffer, mimeType) {
   );
 }
 
+function detectImageMimeType(buffer) {
+  return ["image/jpeg", "image/png", "image/webp"].find((mimeType) =>
+    hasExpectedSignature(buffer, mimeType)
+  );
+}
+
 function validateImage(buffer, mimeType) {
   if (
     !Buffer.isBuffer(buffer) ||
@@ -40,7 +46,13 @@ function validateImage(buffer, mimeType) {
 
 function parseImageRequest(req) {
   if (Buffer.isBuffer(req.body)) {
-    return validateImage(req.body, req.is(["image/jpeg", "image/png", "image/webp"]));
+    const declaredMimeType = req.is(["image/jpeg", "image/png", "image/webp"]);
+    const mimeType =
+      declaredMimeType ||
+      (req.is("application/x-www-form-urlencoded")
+        ? detectImageMimeType(req.body)
+        : undefined);
+    return validateImage(req.body, mimeType);
   }
 
   const dataUrl = req.body?.imageDataUrl;

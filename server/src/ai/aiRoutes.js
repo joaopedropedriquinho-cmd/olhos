@@ -144,7 +144,10 @@ function createAiRouter(
       console.info(`[AI] content-type=${req.get("content-type") || "unknown"}`);
       next();
     },
-    express.raw({ type: IMAGE_MIME_TYPES, limit: MAX_IMAGE_BYTES }),
+    express.raw({
+      type: [...IMAGE_MIME_TYPES, "application/x-www-form-urlencoded"],
+      limit: MAX_IMAGE_BYTES
+    }),
     express.json({ limit: "7mb" }),
     (req, _res, next) => {
       console.info(`[AI] body/image size=${getRequestSizes(req)}`);
@@ -153,6 +156,7 @@ function createAiRouter(
     async (req, res) => {
       try {
         const image = parseImageRequest(req);
+        console.info(`[AI] image extracted size=${image.buffer.length} bytes mime=${image.mimeType}`);
         console.info("[AI] calling analysis service");
         const description = await aiAnalysisService.analyzeImage(image);
         console.info("[GEMINI] success");
