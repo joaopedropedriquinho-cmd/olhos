@@ -62,6 +62,7 @@ class GeminiVisionProvider {
     }
 
     const imageBase64 = buffer.toString("base64");
+    const requestStartedAt = Date.now();
     console.info("[GEMINI] request starting");
     let response;
     try {
@@ -82,9 +83,14 @@ class GeminiVisionProvider {
             }
           ]
         }),
-        signal: AbortSignal.timeout(30_000)
+        signal: AbortSignal.timeout(120_000)
       });
     } catch (cause) {
+      const elapsedMs = Date.now() - requestStartedAt;
+      if (cause instanceof Error && cause.name === "TimeoutError") {
+        console.error(`[GEMINI ERROR] timeout after ${elapsedMs} ms`);
+      }
+
       const error = new Error("Falha de comunicação com a Gemini API.");
       error.upstreamBody = sanitizeErrorBody(
         cause instanceof Error ? cause.message : "Falha de rede desconhecida.",
@@ -94,6 +100,9 @@ class GeminiVisionProvider {
       throw error;
     }
 
+    console.info(
+      `[GEMINI] request finished in ${Date.now() - requestStartedAt} ms status=${response.status}`
+    );
     console.info(`[GEMINI] response status=${response.status}`);
     if (!response.ok) {
       let responseBody;

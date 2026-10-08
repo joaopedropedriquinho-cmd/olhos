@@ -229,10 +229,83 @@ test("Gemini logs response status after receiving a successful response", async 
     console.info = originalConsoleInfo;
   }
 
-  assert.deepEqual(logs, [
-    "[GEMINI] request starting",
-    "[GEMINI] response status=200"
-  ]);
+  assert.equal(logs[0], "[GEMINI] request starting");
+  assert.match(logs[1], /^\[GEMINI\] request finished in \d+ ms status=200$/);
+  assert.equal(logs[2], "[GEMINI] response status=200");
+});
+
+test("Gemini request uses a 120-second timeout and logs elapsed time", async () => {
+  const originalTimeout = AbortSignal.timeout;
+  const originalConsoleInfo = console.info;
+  const logs = [];
+  let timeoutMs;
+  AbortSignal.timeout = (milliseconds) => {
+    timeoutMs = milliseconds;
+    return originalTimeout.call(AbortSignal, milliseconds);
+  };
+  console.info = (...args) => logs.push(args.join(" "));
+
+  try {
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ output_text: "Descrição de teste." });
+        }
+      })
+    });
+
+    await provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" });
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    console.info = originalConsoleInfo;
+  }
+
+  assert.equal(timeoutMs, 120_000);
+  assert.match(
+    logs[1],
+    /^\[GEMINI\] request finished in \d+ ms status=200$/
+  );
+});
+
+test("Gemini timeout logs elapsed milliseconds without exposing request data", async () => {
+  const originalTimeout = AbortSignal.timeout;
+  const originalConsoleError = console.error;
+  const logs = [];
+  let timeoutMs;
+  AbortSignal.timeout = (milliseconds) => {
+    timeoutMs = milliseconds;
+    return AbortSignal.abort(
+      Object.assign(new Error("The operation was aborted due to timeout"), {
+        name: "TimeoutError"
+      })
+    );
+  };
+  console.error = (...args) => logs.push(args.join(" "));
+
+  try {
+    const provider = new GeminiVisionProvider({
+      apiKey: "secret-test-api-key",
+      fetchImpl: async (_url, options) => {
+        throw options.signal.reason;
+      }
+    });
+
+    await assert.rejects(
+      () => provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+      /Falha de comunicação/
+    );
+  } finally {
+    AbortSignal.timeout = originalTimeout;
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(timeoutMs, 120_000);
+  assert.match(logs[0], /^\[GEMINI ERROR\] timeout after \d+ ms$/);
+  assert.doesNotMatch(logs.join("\n"), /secret-test-api-key/);
+  assert.doesNotMatch(logs.join("\n"), new RegExp(PNG_IMAGE.toString("base64")));
 });
 
 test("image validation enforces the 5 MiB limit", () => {
