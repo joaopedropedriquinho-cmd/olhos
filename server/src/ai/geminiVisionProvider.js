@@ -1,6 +1,8 @@
 const GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const MODEL = "gemini-3.8-flash";
+const FALLBACK_MODEL = "gemini-2.5-flash";
 const MAX_ERROR_BODY_LENGTH = 4_000;
+const FALLBACK_RETRY_DELAY_MS = 500;
 const DESCRIPTION_PROMPT =
   "Descreva esta imagem em português brasileiro para uma pessoa cega. " +
   "Seja objetivo, conciso e use frases naturais, adequadas para leitura em voz alta. " +
@@ -62,91 +64,113 @@ class GeminiVisionProvider {
     }
 
     const imageBase64 = buffer.toString("base64");
-    const requestStartedAt = Date.now();
-    console.info("[GEMINI] request starting");
-    let response;
-    try {
-      response = await this.fetchImpl(GEMINI_INTERACTIONS_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": this.apiKey
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          input: [
-            { type: "text", text: DESCRIPTION_PROMPT },
-            {
-              type: "image",
-              data: imageBase64,
-              mime_type: mimeType
-            }
-          ]
-        }),
-        signal: AbortSignal.timeout(120_000)
-      });
-    } catch (cause) {
-      const elapsedMs = Date.now() - requestStartedAt;
-      if (cause instanceof Error && cause.name === "TimeoutError") {
-        console.error(`[GEMINI ERROR] timeout after ${elapsedMs} ms`);
+    const requestModel = async (model) => {
+      const requestStartedAt = Date.now();
+      console.info("[GEMINI] request starting");
+      let response;
+      try {
+        response = await this.fetchImpl(GEMINI_INTERACTIONS_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": this.apiKey
+          },
+          body: JSON.stringify({
+            model,
+            input: [
+              { type: "text", text: DESCRIPTION_PROMPT },
+              {
+                type: "image",
+                data: imageBase64,
+                mime_type: mimeType
+              }
+            ]
+          }),
+          signal: AbortSignal.timeout(120_000)
+        });
+      } catch (cause) {
+        const elapsedMs = Date.now() - requestStartedAt;
+        if (cause instanceof Error && cause.name === "TimeoutError") {
+          console.error(`[GEMINI ERROR] timeout after ${elapsedMs} ms`);
+        }
+
+        const error = new Error("Falha de comunicação com a Gemini API.");
+        error.upstreamBody = sanitizeErrorBody(
+          cause instanceof Error ? cause.message : "Falha de rede desconhecida.",
+          this.apiKey,
+          imageBase64
+        );
+        throw error;
       }
 
-      const error = new Error("Falha de comunicação com a Gemini API.");
-      error.upstreamBody = sanitizeErrorBody(
-        cause instanceof Error ? cause.message : "Falha de rede desconhecida.",
-        this.apiKey,
-        imageBase64
+      console.info(
+        `[GEMINI] request finished in ${Date.now() - requestStartedAt} ms status=${response.status}`
       );
-      throw error;
-    }
+      console.info(`[GEMINI] response status=${response.status}`);
+      if (!response.ok) {
+        let responseBody;
+        try {
+          responseBody = await response.text();
+        } catch {
+          responseBody = "Não foi possível ler o corpo de erro da Gemini.";
+        }
 
-    console.info(
-      `[GEMINI] request finished in ${Date.now() - requestStartedAt} ms status=${response.status}`
-    );
-    console.info(`[GEMINI] response status=${response.status}`);
-    if (!response.ok) {
+        const error = new Error(`Gemini API respondeu HTTP ${response.status}.`);
+        error.upstreamStatus = response.status;
+        error.upstreamBody = sanitizeErrorBody(responseBody, this.apiKey, imageBase64);
+        throw error;
+      }
+
+      let responseText;
+      try {
+        responseText = await response.text();
+      } catch {
+        const error = new Error("Não foi possível ler a resposta da Gemini API.");
+        error.upstreamStatus = response.status;
+        error.upstreamBody = "Não foi possível ler o corpo da resposta.";
+        throw error;
+      }
+
       let responseBody;
       try {
-        responseBody = await response.text();
+        responseBody = JSON.parse(responseText);
       } catch {
-        responseBody = "Não foi possível ler o corpo de erro da Gemini.";
+        const error = new Error("Gemini API retornou uma resposta JSON inválida.");
+        error.upstreamStatus = response.status;
+        error.upstreamBody = sanitizeErrorBody(responseText, this.apiKey, imageBase64);
+        throw error;
       }
 
-      const error = new Error(`Gemini API respondeu HTTP ${response.status}.`);
-      error.upstreamStatus = response.status;
-      error.upstreamBody = sanitizeErrorBody(responseBody, this.apiKey, imageBase64);
-      throw error;
-    }
+      const description = extractDescription(responseBody);
+      if (!description) {
+        const error = new Error("Gemini API não retornou uma descrição.");
+        error.upstreamStatus = response.status;
+        error.upstreamBody = sanitizeErrorBody(responseText, this.apiKey, imageBase64);
+        throw error;
+      }
 
-    let responseText;
+      return description;
+    };
+
     try {
-      responseText = await response.text();
-    } catch {
-      const error = new Error("Não foi possível ler a resposta da Gemini API.");
-      error.upstreamStatus = response.status;
-      error.upstreamBody = "Não foi possível ler o corpo da resposta.";
-      throw error;
+      return await requestModel(MODEL);
+    } catch (error) {
+      if (error.upstreamStatus !== 503) {
+        throw error;
+      }
     }
 
-    let responseBody;
+    console.info("[GEMINI] primary model unavailable, trying fallback model");
     try {
-      responseBody = JSON.parse(responseText);
-    } catch {
-      const error = new Error("Gemini API retornou uma resposta JSON inválida.");
-      error.upstreamStatus = response.status;
-      error.upstreamBody = sanitizeErrorBody(responseText, this.apiKey, imageBase64);
-      throw error;
+      return await requestModel(FALLBACK_MODEL);
+    } catch (error) {
+      if (error.upstreamStatus !== 503) {
+        throw error;
+      }
     }
 
-    const description = extractDescription(responseBody);
-    if (!description) {
-      const error = new Error("Gemini API não retornou uma descrição.");
-      error.upstreamStatus = response.status;
-      error.upstreamBody = sanitizeErrorBody(responseText, this.apiKey, imageBase64);
-      throw error;
-    }
-
-    return description;
+    await new Promise((resolve) => setTimeout(resolve, FALLBACK_RETRY_DELAY_MS));
+    return requestModel(FALLBACK_MODEL);
   }
 }
 

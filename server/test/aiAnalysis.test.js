@@ -14,6 +14,16 @@ const PNG_IMAGE = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00
 ]);
 
+function geminiResponse(status, payload) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return typeof payload === "string" ? payload : JSON.stringify(payload);
+    }
+  };
+}
+
 async function startTestServer(t, aiAnalysisService) {
   const app = express();
   app.use("/api/ai", createAiRouter(aiAnalysisService));
@@ -232,6 +242,103 @@ test("Gemini logs response status after receiving a successful response", async 
   assert.equal(logs[0], "[GEMINI] request starting");
   assert.match(logs[1], /^\[GEMINI\] request finished in \d+ ms status=200$/);
   assert.equal(logs[2], "[GEMINI] response status=200");
+});
+
+test("Gemini retries a primary-model 503 with the image-capable fallback model", async () => {
+  const requests = [];
+  const originalConsoleInfo = console.info;
+  const logs = [];
+  console.info = (...args) => logs.push(args.join(" "));
+
+  try {
+    const provider = new GeminiVisionProvider({
+      apiKey: "test-key",
+      fetchImpl: async (url, options) => {
+        requests.push({ url, options, body: JSON.parse(options.body) });
+        return requests.length === 1
+          ? geminiResponse(503, { error: { message: "Primary model unavailable" } })
+          : geminiResponse(200, { output_text: "Descrição pelo fallback." });
+      }
+    });
+
+    const description = await provider.describeImage({
+      buffer: PNG_IMAGE,
+      mimeType: "image/png"
+    });
+
+    assert.equal(description, "Descrição pelo fallback.");
+  } finally {
+    console.info = originalConsoleInfo;
+  }
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests.map(({ body }) => body.model), [
+    "gemini-3.8-flash",
+    "gemini-2.5-flash"
+  ]);
+  assert.ok(requests.every(({ url }) =>
+    url === "https://generativelanguage.googleapis.com/v1beta/interactions"
+  ));
+  assert.ok(requests.every(({ body }) =>
+    body.input[1].data === PNG_IMAGE.toString("base64") &&
+    body.input[1].mime_type === "image/png"
+  ));
+  assert.ok(requests.every(({ options }) =>
+    options.method === "POST" &&
+    options.headers["Content-Type"] === "application/json" &&
+    options.headers["x-goog-api-key"] === "test-key" &&
+    options.signal
+  ));
+  assert.equal(
+    logs.filter((message) => message === "[GEMINI] primary model unavailable, trying fallback model").length,
+    1
+  );
+});
+
+test("Gemini retries the fallback only once after a second 503", async () => {
+  const requestedModels = [];
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestedModels.push(JSON.parse(options.body).model);
+      return requestedModels.length < 3
+        ? geminiResponse(503, { error: { message: "Model unavailable" } })
+        : geminiResponse(200, { output_text: "Descrição após retry." });
+    }
+  });
+
+  const description = await provider.describeImage({
+    buffer: PNG_IMAGE,
+    mimeType: "image/png"
+  });
+
+  assert.equal(description, "Descrição após retry.");
+  assert.deepEqual(requestedModels, [
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash"
+  ]);
+});
+
+test("Gemini stops after three total attempts when both models return 503", async () => {
+  const requestedModels = [];
+  const provider = new GeminiVisionProvider({
+    apiKey: "test-key",
+    fetchImpl: async (_url, options) => {
+      requestedModels.push(JSON.parse(options.body).model);
+      return geminiResponse(503, { error: { message: "Model unavailable" } });
+    }
+  });
+
+  await assert.rejects(
+    () => provider.describeImage({ buffer: PNG_IMAGE, mimeType: "image/png" }),
+    (error) => error.upstreamStatus === 503
+  );
+  assert.deepEqual(requestedModels, [
+    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash"
+  ]);
 });
 
 test("Gemini request uses a 120-second timeout and logs elapsed time", async () => {
