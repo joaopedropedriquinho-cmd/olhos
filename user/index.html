@@ -20,23 +20,23 @@
 
       <h1 id="page-title">Olá, Olhos</h1>
       <p class="intro">
-        Um assistente por voz para identificar objetos, ler textos, responder
-        perguntas sobre fotos e chamar um voluntário. As fotos são processadas
-        temporariamente e não ficam armazenadas.
+        Um assistente visual por voz que descreve o que aparece na câmera,
+        lê textos e responde perguntas sobre a mesma foto. As imagens são
+        processadas temporariamente e não ficam armazenadas.
       </p>
 
       <p id="voice-explanation" class="voice-explanation">
-        A escuta só começa quando você ativa o assistente. Enquanto ele estiver
-        ativo, esta página aberta reconhecerá “Olá, Olhos”. O navegador pode
-        precisar de internet para reconhecer a fala. A escuta não funciona com
-        segurança com a tela bloqueada.
+        Depois de permitir o microfone, o assistente aguardará “Olá, Olhos”
+        enquanto esta página estiver aberta. O navegador pode precisar de
+        internet para reconhecer a fala. A escuta pode ser interrompida quando
+        a página fica em segundo plano ou a tela é bloqueada.
       </p>
 
       <button id="setup-voice" class="button button-primary" type="button">
         Começar configuração por voz
       </button>
       <button id="voice-toggle" class="button button-primary" type="button" hidden>
-        Ativar assistente de voz
+        Pausar escuta
       </button>
       <p id="voice-state" class="voice-state" aria-live="polite">
         Assistente de voz desligado.
@@ -44,7 +44,7 @@
 
       <div class="controls main-controls">
         <button id="open-camera" class="button button-secondary" type="button">
-          Abrir câmera
+          Tirar uma foto
         </button>
         <button id="pause-speech" class="button button-secondary" type="button" hidden>
           Pausar fala
@@ -60,6 +60,9 @@
         <p id="fallback-message"></p>
         <button id="retry-voice" class="button button-secondary" type="button" hidden>
           Tentar ouvir novamente
+        </button>
+        <button id="retry-analysis" class="button button-secondary" type="button" hidden>
+          Tentar análise novamente
         </button>
       </section>
 
@@ -128,20 +131,12 @@
         </form>
       </section>
 
-      <section id="request-panel" class="flow-section request-panel" aria-live="polite" hidden>
-        <p id="request-message"></p>
-        <button id="cancel-request" class="button button-secondary" type="button" hidden>
-          Cancelar pedido
-        </button>
-      </section>
-
       <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">
         Pronto para começar. Toque em “Começar configuração por voz”.
       </p>
       <p id="voice-status" class="visually-hidden" role="status" aria-live="assertive" aria-atomic="true"></p>
     </main>
 
-    <script src="/socket.io/socket.io.js"></script>
     <script src="/user/app.js" defer></script>
   </body>
 </html>

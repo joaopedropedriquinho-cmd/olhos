@@ -69,7 +69,6 @@ h1 {
 .intro,
 .photo-hint,
 .status,
-.request-panel p,
 .voice-explanation,
 .voice-state,
 .permission-status,
@@ -219,21 +218,6 @@ textarea {
   min-height: 1.6em;
   margin: 24px 0 0;
   color: #324c54;
-}
-
-.request-panel {
-  padding: 16px;
-  border-left: 5px solid #075d70;
-  border-radius: 8px;
-  background: #edf5f6;
-}
-
-.request-panel p {
-  margin: 0;
-}
-
-.request-panel .button {
-  margin-top: 12px;
 }
 
 .visually-hidden {
