@@ -19,22 +19,40 @@
       </a>
 
       <h1 id="page-title">Olá, Olhos</h1>
-      <p class="intro">
-        Um assistente visual por voz que descreve o que aparece na câmera,
-        lê textos e responde perguntas sobre a mesma foto. As imagens são
-        processadas temporariamente e não ficam armazenadas.
-      </p>
+      <section class="introduction" aria-labelledby="introduction-title">
+        <h2 id="introduction-title">Seu assistente visual</h2>
+        <p class="intro">
+          O Meus Olhos ajuda pessoas cegas ou com baixa visão a compreender o
+          ambiente ao redor. Ele pode descrever objetos, pessoas e lugares,
+          ler textos que apareçam em uma foto e responder perguntas sobre a
+          imagem.
+        </p>
+        <p class="intro-example">
+          Por exemplo, você pode perguntar o que está escrito em uma placa ou
+          qual é a cor de uma roupa. Depois de configurar o microfone, diga
+          “Olá, Olhos”. A câmera só será solicitada quando você escolher tirar
+          uma foto. As imagens são processadas temporariamente e não ficam
+          armazenadas.
+        </p>
+        <div class="introduction-controls">
+          <button id="listen-introduction" class="button button-secondary" type="button">
+            Ouvir apresentação
+          </button>
+          <button id="setup-voice" class="button button-primary" type="button">
+            Começar configuração
+          </button>
+        </div>
+        <p id="introduction-status" class="introduction-status" role="status" aria-live="polite"></p>
+      </section>
 
       <p id="voice-explanation" class="voice-explanation">
-        Depois de permitir o microfone, o assistente aguardará “Olá, Olhos”
-        enquanto esta página estiver aberta. O navegador pode precisar de
-        internet para reconhecer a fala. A escuta pode ser interrompida quando
-        a página fica em segundo plano ou a tela é bloqueada.
+        O microfone só será solicitado quando você tocar em “Começar
+        configuração”. Se o navegador não oferecer reconhecimento de voz,
+        você ainda poderá tirar ou escolher uma foto e digitar perguntas. A
+        escuta pode ser interrompida quando a página fica em segundo plano ou
+        a tela é bloqueada.
       </p>
 
-      <button id="setup-voice" class="button button-primary" type="button">
-        Começar configuração por voz
-      </button>
       <button id="voice-toggle" class="button button-primary" type="button" hidden>
         Pausar escuta
       </button>
@@ -132,7 +150,7 @@
       </section>
 
       <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">
-        Pronto para começar. Toque em “Começar configuração por voz”.
+        Leia ou ouça a apresentação e toque em “Começar configuração” quando quiser.
       </p>
       <p id="voice-status" class="visually-hidden" role="status" aria-live="assertive" aria-atomic="true"></p>
     </main>

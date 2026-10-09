@@ -36,6 +36,48 @@ textarea {
   box-shadow: 0 16px 48px rgb(20 47 56 / 8%);
 }
 
+.introduction {
+  margin-top: 24px;
+  padding: clamp(18px, 4vw, 28px);
+  border: 2px solid #b7cdd1;
+  border-radius: 16px;
+  background: #f4f8f8;
+}
+
+.introduction h2 {
+  margin: 0 0 12px;
+  color: #102f3a;
+  font-size: clamp(1.4rem, 5vw, 1.8rem);
+  line-height: 1.25;
+}
+
+.intro,
+.intro-example {
+  margin: 0;
+  color: #263f47;
+  font-size: 1.2rem;
+  line-height: 1.65;
+}
+
+.intro-example {
+  margin-top: 12px;
+}
+
+.introduction-controls {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.introduction-status {
+  min-height: 1.5em;
+  margin: 12px 0 0;
+  color: #064b5b;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -66,7 +108,6 @@ h1 {
   line-height: 1.12;
 }
 
-.intro,
 .photo-hint,
 .status,
 .voice-explanation,

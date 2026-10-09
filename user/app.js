@@ -3,6 +3,8 @@
   const VOICE_PREFERENCE_KEY = "meusOlhos.voiceEnabled";
   const DESCRIPTION_URL = "/api/ai/analyze";
   const QUESTION_URL = "/api/ai/ask-image";
+  const INTRODUCTION =
+    "Olá! Bem-vindo ao Meus Olhos, seu assistente visual. Eu posso ajudar você a entender o que está ao seu redor. Posso tirar uma foto e descrever objetos, pessoas e ambientes, ler textos que apareçam na imagem e responder perguntas sobre aquilo que você fotografou. Por exemplo, você pode perguntar o que está escrito em uma placa ou qual é a cor de uma roupa. Para começar, precisamos configurar o acesso ao microfone e à câmera. Depois, basta dizer: Olá, Olhos. Eu vou orientar você durante todo o processo.";
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -22,6 +24,8 @@
   });
 
   const elements = {
+    listenIntroduction: document.getElementById("listen-introduction"),
+    introductionStatus: document.getElementById("introduction-status"),
     setupVoice: document.getElementById("setup-voice"),
     voiceToggle: document.getElementById("voice-toggle"),
     voiceState: document.getElementById("voice-state"),
@@ -80,6 +84,7 @@
   let speechToken = 0;
   let speechContinuation = null;
   let lastAnalysisFailed = false;
+  let introductionPlaybackActive = false;
 
   const stateMessages = {
     [STATES.WAITING_WAKE]: "Aguardando “Olá, Olhos”.",
@@ -602,41 +607,28 @@
 
   async function refreshPermissionState() {
     const permission = await queryMicrophonePermission();
+    if (setupInProgress || voiceEnabled) {
+      return;
+    }
     if (permission === "granted") {
-      microphonePermissionGranted = true;
+      elements.permissionStatus.textContent =
+        "Microfone permitido. Toque em “Começar configuração” para iniciar a escuta.";
     } else if (permission === "denied") {
       microphonePermissionGranted = false;
       voiceEnabled = false;
-      storeVoicePreference(false);
-    }
-
-    elements.permissionStatus.textContent =
-      permission === "unknown"
-        ? "O navegador não informa diretamente o estado da permissão do microfone."
-        : `Microfone: ${permission === "granted" ? "permitido" : permission === "denied" ? "negado" : "ainda não solicitado"}.`;
-
-    if (microphonePermissionGranted && SpeechRecognition) {
-      elements.setupVoice.hidden = true;
-      elements.voiceToggle.hidden = false;
-      elements.voiceToggle.textContent = voiceEnabled ? "Pausar escuta" : "Retomar escuta";
-      elements.voiceToggle.setAttribute("aria-pressed", String(voiceEnabled));
-      if (voiceEnabled) {
-        ensureRecognizer();
-        setRecognitionMode("wake");
-      } else {
-        setState(STATES.PAUSED);
-      }
+      elements.permissionStatus.textContent =
+        "Microfone bloqueado. Habilite a permissão nas configurações do navegador e toque em “Começar configuração” para tentar novamente.";
+      setFallback(elements.permissionStatus.textContent);
+      elements.setupVoice.textContent = "Tentar configuração novamente";
+      setState(STATES.NEEDS_SETUP, elements.permissionStatus.textContent);
     } else {
-      elements.setupVoice.hidden = false;
-      elements.voiceToggle.hidden = true;
-      if (permission === "denied") {
-        elements.setupVoice.textContent = "Tentar configuração por voz novamente";
-        setFallback(
-          "O microfone está bloqueado. Habilite a permissão nas configurações do site no navegador e tente novamente."
-        );
-        setState(STATES.NEEDS_SETUP);
-      }
+      elements.permissionStatus.textContent =
+        permission === "prompt"
+          ? "O acesso ao microfone só será solicitado quando você tocar em “Começar configuração”."
+          : "O estado da permissão não está disponível. O acesso só será solicitado quando você tocar em “Começar configuração”.";
     }
+    elements.setupVoice.hidden = false;
+    elements.voiceToggle.hidden = true;
   }
 
   async function requestMicrophonePermission() {
@@ -690,6 +682,11 @@
         "A voz do navegador não está disponível. Leia as instruções na tela para conceder acesso ao microfone.";
     }
 
+    if (introductionPlaybackActive) {
+      introductionPlaybackActive = false;
+      elements.introductionStatus.textContent =
+        "Apresentação interrompida para iniciar a configuração.";
+    }
     setupInProgress = true;
     elements.setupVoice.disabled = true;
     setFallback("");
@@ -713,7 +710,7 @@
       elements.setupVoice.hidden = true;
       setVoiceEnabled(true, { startListening: false });
       speak(
-        "Olá! Sou o Olhos, seu assistente visual. Posso ajudar você a entender o que está ao seu redor. Estou pronto e aguardando Olá, Olhos.",
+        "Configuração concluída. Estou aguardando você dizer “Olá, Olhos”.",
         () => setRecognitionMode("wake")
       );
     };
@@ -1411,22 +1408,27 @@
   }
 
   function initializeRecognitionPreference() {
-    try {
-      voiceEnabled = window.localStorage.getItem(VOICE_PREFERENCE_KEY) === "true";
-    } catch (error) {
-      voiceEnabled = false;
-    }
+    voiceEnabled = false;
+    microphonePermissionGranted = false;
     if (!SpeechRecognition) {
-      elements.setupVoice.textContent = "Reconhecimento de voz indisponível";
+      elements.setupVoice.textContent = "Começar configuração";
       setFallback(
         "Este navegador não oferece reconhecimento de voz. Você pode tirar ou escolher uma foto e digitar sua pergunta."
       );
       setState(STATES.NEEDS_SETUP);
-      return;
+    } else {
+      refreshPermissionState();
     }
-    refreshPermissionState();
   }
 
+  elements.listenIntroduction.addEventListener("click", () => {
+    introductionPlaybackActive = true;
+    elements.introductionStatus.textContent = "Reproduzindo a apresentação.";
+    speak(INTRODUCTION, () => {
+      introductionPlaybackActive = false;
+      elements.introductionStatus.textContent = "Apresentação concluída.";
+    });
+  });
   elements.setupVoice.addEventListener("click", beginMicrophoneSetup);
   elements.voiceToggle.addEventListener("click", onVoiceToggle);
   elements.openCamera.addEventListener("click", onCameraButton);
