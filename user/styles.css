@@ -69,13 +69,38 @@ h1 {
 .intro,
 .photo-hint,
 .status,
-.request-panel p {
+.request-panel p,
+.voice-explanation,
+.voice-state,
+.permission-status,
+#fallback-message {
   font-size: 1.125rem;
   line-height: 1.6;
 }
 
 .intro {
   margin: 0 0 28px;
+  color: #324c54;
+}
+
+.voice-explanation {
+  margin: 0 0 20px;
+  color: #324c54;
+}
+
+.voice-state {
+  margin: 12px 0 0;
+  color: #064b5b;
+  font-weight: 700;
+}
+
+.permission-status {
+  margin: 12px 0 0;
+  color: #324c54;
+}
+
+#fallback-message {
+  margin: 0 0 12px;
   color: #324c54;
 }
 
@@ -94,6 +119,7 @@ h1 {
 
 .button:focus-visible,
 .brand:focus-visible,
+.media-preview:focus-visible,
 textarea:focus-visible {
   outline: 4px solid #efb400;
   outline-offset: 4px;
@@ -116,6 +142,20 @@ textarea:focus-visible {
   border-color: #075d70;
   color: #064b5b;
   background: #fff;
+}
+
+.main-controls {
+  margin-top: 16px;
+}
+
+.cancel-photo {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .button-secondary:hover {

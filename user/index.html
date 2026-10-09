@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#102f3a">
     <meta
       name="description"
-      content="Use a câmera e a voz para perguntar sobre uma imagem com o Meus Olhos."
+      content="Um assistente de acessibilidade visual por voz, com o Meus Olhos."
     >
-    <title>Meus Olhos | Assistência visual</title>
+    <title>Meus Olhos | Olá, Olhos</title>
     <link rel="stylesheet" href="/user/styles.css">
   </head>
   <body>
@@ -18,14 +18,53 @@
         <span>MEUS OLHOS</span>
       </a>
 
-      <h1 id="page-title">Assistência visual, por voz</h1>
+      <h1 id="page-title">Olá, Olhos</h1>
       <p class="intro">
-        Tire uma foto e pergunte o que gostaria de saber. A imagem é processada
-        temporariamente e não fica armazenada.
+        Um assistente por voz para identificar objetos, ler textos, responder
+        perguntas sobre fotos e chamar um voluntário. As fotos são processadas
+        temporariamente e não ficam armazenadas.
       </p>
 
-      <button id="open-camera" class="button button-primary" type="button">
-        Abrir câmera
+      <p id="voice-explanation" class="voice-explanation">
+        A escuta só começa quando você ativa o assistente. Enquanto ele estiver
+        ativo, esta página aberta reconhecerá “Olá, Olhos”. O navegador pode
+        precisar de internet para reconhecer a fala. A escuta não funciona com
+        segurança com a tela bloqueada.
+      </p>
+
+      <button id="setup-voice" class="button button-primary" type="button">
+        Começar configuração por voz
+      </button>
+      <button id="voice-toggle" class="button button-primary" type="button" hidden>
+        Ativar assistente de voz
+      </button>
+      <p id="voice-state" class="voice-state" aria-live="polite">
+        Assistente de voz desligado.
+      </p>
+
+      <div class="controls main-controls">
+        <button id="open-camera" class="button button-secondary" type="button">
+          Abrir câmera
+        </button>
+        <button id="pause-speech" class="button button-secondary" type="button" hidden>
+          Pausar fala
+        </button>
+        <button id="stop-speech" class="button button-secondary" type="button" hidden>
+          Interromper fala
+        </button>
+      </div>
+
+      <p id="permission-status" class="permission-status" role="status" aria-live="polite"></p>
+
+      <section id="fallback-notice" class="flow-section" aria-live="polite" hidden>
+        <p id="fallback-message"></p>
+        <button id="retry-voice" class="button button-secondary" type="button" hidden>
+          Tentar ouvir novamente
+        </button>
+      </section>
+
+      <button id="cancel-photo" class="button button-secondary cancel-photo" type="button" hidden>
+        Cancelar captura
       </button>
 
       <section id="camera-section" class="flow-section" aria-label="Câmera" hidden>
@@ -40,6 +79,9 @@
         <div class="controls">
           <button id="capture-photo" class="button button-primary" type="button" hidden>
             Tirar foto
+          </button>
+          <button id="close-camera" class="button button-secondary" type="button" hidden>
+            Fechar câmera
           </button>
           <button id="file-picker-button" class="button button-secondary" type="button" hidden>
             Tirar ou escolher uma foto
@@ -56,10 +98,13 @@
       </section>
 
       <section id="photo-section" class="flow-section" aria-label="Foto e pergunta" hidden>
-        <img id="photo-preview" class="media-preview" alt="Prévia da foto escolhida">
-        <p class="photo-hint">
-          Diga sua pergunta quando ouvir o aviso. A foto será enviada ao serviço para respondê-la.
-        </p>
+        <img
+          id="photo-preview"
+          class="media-preview"
+          alt="Prévia da imagem capturada ou escolhida"
+          tabindex="0"
+        >
+        <p class="photo-hint">A foto permanece nesta página até você sair ou tirar outra.</p>
         <form id="question-form" class="question-form">
           <label for="question">Ou digite sua pergunta</label>
           <textarea
@@ -77,7 +122,7 @@
               Tirar outra foto
             </button>
             <button id="listen-again" class="button button-secondary" type="button" hidden>
-              Tentar falar
+              Perguntar por voz
             </button>
           </div>
         </form>
@@ -91,7 +136,7 @@
       </section>
 
       <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">
-        Pronto para começar.
+        Pronto para começar. Toque em “Começar configuração por voz”.
       </p>
       <p id="voice-status" class="visually-hidden" role="status" aria-live="assertive" aria-atomic="true"></p>
     </main>
